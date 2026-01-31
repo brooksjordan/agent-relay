@@ -53,16 +53,16 @@ The `< CLAUDE.md` is stdin redirection. The prompt is delivered via stdin, not a
 
 **What we had:**
 ```powershell
-# Loop running from C:\computronium
+# Loop running from C:\scripts
 $output = $prompt | claude --print --dangerously-skip-permissions
-# Claude creates files in C:\computronium (wrong!)
+# Claude creates files in C:\scripts (wrong!)
 ```
 
 **What it should be:**
 ```powershell
-Set-Location $WorkspaceRoot  # C:\test_orchids
+Set-Location $WorkspaceRoot  # C:\your-project
 $output = $prompt | claude --print --dangerously-skip-permissions
-# Claude creates files in C:\test_orchids (correct!)
+# Claude creates files in C:\your-project (correct!)
 ```
 
 **Why this matters:**
@@ -73,7 +73,7 @@ Even with absolute paths in the prompt, Claude may still use relative paths inte
 
 **How we found it:**
 
-Direct testing showed files WERE being created - just in the wrong place. We found malformed directories like `C:\computronium\C:test_orchidssrcappcatalog` from path concatenation errors.
+Direct testing showed files WERE being created - just in the wrong place. We found malformed directories from path concatenation errors when the working directory wasn't set correctly.
 
 ---
 
@@ -222,12 +222,12 @@ This is more robust than maintaining a long-running session.
 
 Final test run: **8 tasks, 8 completed, 0 failed**
 
-Files created:
-- `C:\test_orchids\next.config.js`
-- `C:\test_orchids\tailwind.config.js`
-- `C:\test_orchids\src\components\ProductCard.tsx`
-- `C:\test_orchids\src\app\catalog\page.tsx`
-- `C:\test_orchids\src\app\catalog\loading.tsx`
+Example files created:
+- `next.config.js`
+- `tailwind.config.js`
+- `src/components/ProductCard.tsx`
+- `src/app/catalog/page.tsx`
+- `src/app/catalog/loading.tsx`
 
 All files verified as existing with correct content.
 

@@ -212,7 +212,7 @@ See `README.md` for full documentation and `docs/LESSONS_LEARNED.md` for debuggi
 
 ## Next Steps
 
-1. ~~Test on a real project~~ **DONE** - Tested on test_orchids 2026-01-30
+1. ~~Test on a real project~~ **DONE** - Tested on sample Next.js e-commerce project 2026-01-30
 2. Fine-tune based on learnings - See `docs/LESSONS_LEARNED.md`
 
 ---

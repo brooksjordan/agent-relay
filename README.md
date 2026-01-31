@@ -1,8 +1,17 @@
 # Ship While You Sleep
 
-Autonomous overnight development using Claude Code. Based on [Ryan Carson's methodology](https://x.com/ryancarson/status/1881021946307342828).
+> ⚠️ **Warning:** This tool runs AI agents autonomously overnight. It will consume API credits and modify code in your repository. Always run on a feature branch, never on main.
+
+Autonomous overnight development using Claude Code CLI. Based on [Ryan Carson's methodology](https://x.com/ryancarson/status/1881021946307342828).
 
 **Tested and working as of 2026-01-31.** (v2: timeouts, retries, transcripts)
+
+## Prerequisites
+
+- **PowerShell 5.1+** (Windows) or **PowerShell 7+** (cross-platform)
+- **Claude Code CLI** installed and authenticated (`claude --version` should work)
+- **Git** configured with user.name and user.email
+- **ANTHROPIC_API_KEY** environment variable set (or Claude CLI already authenticated)
 
 ---
 
@@ -324,34 +333,49 @@ Key patterns borrowed:
 
 ## Test Results
 
-**2026-01-30 Test Run (test_orchids project):**
+**Example successful run:**
 
 ```
-[18:42:45] === Execution Loop Started ===
-[18:43:13] Task 4 completed - next.config.js
-[18:44:02] Task 5 completed - tailwind.config.js
-[18:44:55] Task 6 completed - ProductCard.tsx
-[18:46:06] Task 7 completed - catalog/page.tsx
-[18:47:02] Task 8 completed - catalog/loading.tsx
-[18:47:04] All tasks processed!
+[21:10:35] === Auto-Compound Started ===
+[21:10:49] Priority item: Shopping Cart System
+[21:10:49] Created branch: feature/shopping-cart
+[21:12:09] PRD created
+[21:12:45] Tasks created: 8 tasks
+[21:12:45] Starting execution loop...
+[21:14:50] Task 1 completed!
+[21:16:25] Task 2 completed!
+...
+[21:30:10] Task 8 completed!
+[21:30:13] All tasks processed!
 Final: 8 completed, 0 failed, 0 pending
+Duration: 00:19:37
 ```
 
-All files verified as created with correct content.
+8 tasks, 8 completed, 0 failed. All files verified as created with correct content.
 
 ---
 
 ## Contributing
 
-This is part of the [Computronium](file:///C:/computronium) methodology. Patterns that work get documented. Failures get analyzed.
-
-When something breaks:
+Contributions welcome! When something breaks:
 1. Fix it
-2. Document why it broke
+2. Document why it broke in `docs/LESSONS_LEARNED.md`
 3. Update this README
 
 ---
 
+## Security Considerations
+
+1. **`--dangerously-skip-permissions`**: The scripts use this flag to run Claude Code non-interactively. This bypasses confirmation prompts. Only run on code you trust.
+
+2. **Quality checks execute arbitrary commands**: The `-QualityChecks` parameter runs commands via `Invoke-Expression`. Only pass commands you trust (e.g., `npm test`, `npm run build`).
+
+3. **Git operations**: The scripts create branches, commit, and can push to remotes. Always run on feature branches, never on main/master directly.
+
+4. **API costs**: Overnight runs consume Claude API credits. Set `MaxIterations` appropriately for your budget.
+
+5. **Transcripts may contain sensitive data**: Session transcripts are saved to `logs/transcripts/`. The scripts include basic secret redaction but review before sharing logs.
+
 ## License
 
-MIT
+MIT - See [LICENSE](LICENSE) file.
