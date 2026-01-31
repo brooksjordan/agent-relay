@@ -2,7 +2,7 @@
 
 > ⚠️ **Warning:** This tool runs AI agents autonomously overnight. It will consume API credits and modify code in your repository. Always run on a feature branch, never on main.
 
-Autonomous overnight development using Claude Code CLI. Based on [Ryan Carson's methodology](https://x.com/ryancarson/status/1881021946307342828).
+Autonomous overnight development using Claude Code CLI. Based on [Ryan Carson's methodology](https://x.com/ryancarson/status/2016520542723924279).
 
 **Tested and working as of 2026-01-31.** (v2: timeouts, retries, transcripts)
 
