@@ -2,16 +2,47 @@
 
 > ⚠️ **Warning:** This tool runs AI agents autonomously overnight. It will consume API credits and modify code in your repository. Always run on a feature branch, never on main.
 
-Autonomous overnight development using Claude Code CLI. Based on [Ryan Carson's methodology](https://x.com/ryancarson/status/2016520542723924279).
+> 🔴 **Destructive Operations:** The auto-compound script runs `git reset --hard` and `git clean -fd` to ensure a clean workspace. **This will delete uncommitted changes.** Always commit or stash work before running.
+
+Autonomous overnight development using Claude Code CLI. Inspired by [Ryan Carson's methodology](https://x.com/ryancarson/status/2016520542723924279).
 
 **Tested and working as of 2026-01-31.** (v2: timeouts, retries, transcripts)
 
-## Prerequisites
+> **Disclaimer:** This project is not affiliated with or endorsed by Anthropic. Users must comply with Anthropic's terms of service and usage policies.
 
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [What It Does](#what-it-does)
+- [Scripts Reference](#scripts-reference)
+- [Critical Implementation Details](#critical-implementation-details)
+- [Project Setup Checklist](#project-setup-checklist)
+- [Troubleshooting](#troubleshooting)
+- [Security Considerations](#security-considerations)
+
+---
+
+## Installation
+
+```powershell
+# Clone to any directory (examples use C:\ship_asleep but any path works)
+git clone https://github.com/brooksjordan/ship-asleep.git C:\ship_asleep
+
+# Or clone to current directory
+git clone https://github.com/brooksjordan/ship-asleep.git
+```
+
+**Prerequisites:**
 - **PowerShell 5.1+** (Windows) or **PowerShell 7+** (cross-platform)
 - **Claude Code CLI** installed and authenticated (`claude --version` should work)
 - **Git** configured with user.name and user.email
 - **ANTHROPIC_API_KEY** environment variable set (or Claude CLI already authenticated)
+- **GitHub CLI** (`gh`) for automatic PR creation (optional - will push branch without PR if not installed)
+
+> **Note:** Scheduler automation (`install-scheduler.ps1`) is Windows-only. On Mac/Linux, run `overnight.ps1` via cron or manually.
 
 ---
 
@@ -36,11 +67,19 @@ Each night makes future nights smarter. Learnings compound into CLAUDE.md.
 mkdir C:\your-project\reports
 "1. Build the user dashboard`n2. Add authentication`n3. Fix cart bug" | Out-File C:\your-project\reports\priority.md
 
-# 2. Install the scheduler
-C:\ship_asleep\scripts\install-scheduler.ps1 -ProjectPath "C:\your-project"
+# 2. Test with a dry run first (no changes made)
+.\scripts\auto-compound.ps1 -ProjectPath "C:\your-project" -DryRun
 
-# 3. Go to sleep. Wake up to PRs.
+# 3. Run for real (creates branch, implements #1 priority, opens PR)
+.\scripts\auto-compound.ps1 -ProjectPath "C:\your-project"
+
+# 4. For overnight automation (Windows only)
+.\scripts\install-scheduler.ps1 -ProjectPath "C:\your-project"
+
+# 5. Go to sleep. Wake up to PRs.
 ```
+
+> **Tip:** Run from the ship-asleep directory, or use absolute paths to the scripts.
 
 ---
 
@@ -374,7 +413,7 @@ Contributions welcome! When something breaks:
 
 4. **API costs**: Overnight runs consume Claude API credits. Set `MaxIterations` appropriately for your budget.
 
-5. **Transcripts may contain sensitive data**: Session transcripts are saved to `logs/transcripts/`. The scripts include basic secret redaction but review before sharing logs.
+5. **Transcripts may contain sensitive data**: Session transcripts are saved to `logs/transcripts/`. The scripts attempt secret redaction but **assume redaction is incomplete**. Never share transcript logs without manual review. Treat all logs as potentially containing secrets.
 
 ## License
 
