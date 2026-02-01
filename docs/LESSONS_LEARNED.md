@@ -818,3 +818,67 @@ Start-Process -FilePath "powershell.exe" `
 - Window stays open with "press any key" for post-mortem review
 
 *Implemented 2026-02-01.*
+
+---
+
+## 2026-02-01 — Build Incrementally, Merge Before Moving On
+
+### Problem: Feature branches get orphaned and work is lost
+
+During overnight runs, the auto-compound pipeline:
+1. Creates a feature branch for Priority 1
+2. Builds the feature (e.g., admin passport pages)
+3. Moves to Priority 2 **without merging Priority 1**
+4. Next run does `git reset --hard` to start clean
+5. Priority 1 work is orphaned — still in git history but not on main
+
+**Example:** Admin passport management pages (`/admin/passports`, `/admin/passports/new`, create/edit forms) were built in commits around `1c8ff87` but never merged. Subsequent runs started fresh from main, leaving that work stranded.
+
+### Root Cause: No merge gate between priorities
+
+The pipeline assumes each run is independent. But features build on each other:
+- Priority 1 builds foundational pages
+- Priority 2 extends them
+- If Priority 1 isn't merged, Priority 2 either duplicates work or builds on nothing
+
+### The Principle
+
+> **Build incrementally. Merge before moving on.**
+
+Each completed feature should be:
+1. **Committed** to its feature branch ✓ (already happens)
+2. **PR created** ✓ (already happens)
+3. **Merged to main** before the next priority starts ← MISSING
+
+### Recommended Fix
+
+Add a merge gate to `auto-compound.ps1`:
+
+```powershell
+# After PR creation, wait for merge or auto-merge if tests pass
+if ($AutoMerge -and $TestsPassed) {
+    gh pr merge --auto --squash
+    # Wait for merge to complete before starting next priority
+}
+```
+
+Or require manual merge review:
+```
+[GATE] Priority 1 complete. PR #42 ready for review.
+       Merge to main before running next priority.
+```
+
+### Workaround Until Fixed
+
+Before starting a new auto-compound run:
+1. Check for open PRs: `gh pr list`
+2. Review and merge completed work
+3. Then start the next priority
+
+### Key Takeaway
+
+**Overnight automation should compound, not reset.** Each night's work should build on the previous night's merged code. Orphan branches are wasted compute.
+
+*Discovered 2026-02-01 when admin pages were found orphaned in git history.*
+
+---

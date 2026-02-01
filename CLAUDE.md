@@ -149,6 +149,20 @@ Start-Process powershell -ArgumentList @(
 - Don't use PowerShell async event handlers — they don't fire reliably
 - Don't run destructive git commands on main branch
 - Don't assume PATH is inherited by spawned processes
+- **Don't start a new priority without merging the previous one** — work gets orphaned
+
+## The Compounding Principle
+
+> **Build incrementally. Merge before moving on.**
+
+Each overnight run should:
+1. Complete a feature on its branch
+2. Create PR and **merge to main**
+3. Only then start the next priority
+
+Without this, `git reset --hard` at the start of each run orphans previous work. Features that took hours to build end up stranded in git history, never reaching main.
+
+**Before running auto-compound:** Check for open PRs (`gh pr list`) and merge completed work first.
 
 ## Files That Matter Most
 
