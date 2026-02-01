@@ -372,3 +372,449 @@ Routes: Catalog at /catalog, detail pages at /catalog/[id], cart at /cart
 ```
 
 When routes are documented, the agent is less likely to hallucinate alternative paths.
+
+---
+
+## 2026-01-31 — PowerShell Quote Stripping in Start-Process
+
+### Problem: ProjectName parameter with spaces broke argument parsing
+
+When launching the overnight build in a separate window:
+
+```powershell
+Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd C:/ship_asleep/scripts; ./overnight.ps1 -ProjectPath C:/test_orchids -ProjectName "Rare Orchid Store" -MaxIterations 30'
+```
+
+Produced this error:
+```
+Cannot process argument transformation on parameter 'MaxRetries'. Cannot convert value "Store" to type "System.Int32".
+```
+
+The string `"Rare Orchid Store"` was being split into three separate arguments. `Store` then bound to the next parameter (`-MaxRetries`), which expects an integer.
+
+### Root Cause: Quote Stripping
+
+When `Start-Process` launches a new `powershell.exe` instance, the child PowerShell **consumes one layer of quotes** when parsing the `-Command` argument.
+
+1. We pass: `-ProjectName "Rare Orchid Store"`
+2. Child PowerShell parses it, treats `"` as string delimiters, removes them
+3. Engine receives: `-ProjectName Rare Orchid Store` (three separate tokens)
+4. `Rare` binds to `-ProjectName`, `Orchid` is orphaned, `Store` binds to next param
+
+### Solution: Use single quotes inside double quotes
+
+Single quotes `'` are treated as literal strings. Wrap the outer command in double quotes, use single quotes for the inner string:
+
+```powershell
+# WRONG - double quotes get stripped
+Start-Process powershell -ArgumentList '... -ProjectName "Rare Orchid Store" ...'
+
+# RIGHT - single quotes survive
+Start-Process powershell -ArgumentList '-NoExit', '-Command', "cd C:/ship_asleep/scripts; ./overnight.ps1 -ProjectPath C:/test_orchids -ProjectName 'Rare Orchid Store' -MaxIterations 30"
+```
+
+Note the outer wrapper changed from `'...'` to `"..."` and the inner string changed from `"Rare Orchid Store"` to `'Rare Orchid Store'`.
+
+### Alternative: Escape with backslash
+
+For cases where you need double quotes (e.g., variable expansion), escape with `\"`:
+
+```powershell
+Start-Process powershell -ArgumentList '... -ProjectName \"Rare Orchid Store\" ...'
+```
+
+The backslash escape works because `Start-Process` hands arguments to the Windows API, which uses `\"` for escaping (not PowerShell's backtick).
+
+### Additional Escape Method: Double Single Quotes
+
+When the outer wrapper is already using complex quoting, use `''` (two single quotes) which PowerShell interprets as a literal single quote:
+
+```powershell
+# Double single quotes survive the hop
+Start-Process powershell -ArgumentList '-NoExit -Command "cd C:/scripts; ./overnight.ps1 -ProjectName ''Rare Orchid Store'' -MaxIterations 30"'
+```
+
+### The Definitive Solution: Use `-File` Instead of `-Command`
+
+After multiple failed attempts with `-Command`, the reliable solution is to use `-File` and pass each argument as a separate array element with quotes embedded:
+
+```powershell
+Start-Process -FilePath powershell.exe -ArgumentList @(
+    '-NoExit'
+    '-File', 'C:\ship_asleep\scripts\overnight.ps1'
+    '-ProjectPath', 'C:\test_orchids'
+    '-ProjectName', '"Rare Orchid Store"'
+    '-MaxIterations', '30'
+)
+```
+
+**Why `-File` works better than `-Command`:**
+- `-Command` concatenates all arguments into a single string, then re-parses it
+- `-File` passes arguments directly to the script's parameter binder
+- With `-File`, embedded quotes in `'"Rare Orchid Store"'` survive intact
+
+### Key Takeaway
+
+**Nested PowerShell invocations strip one layer of quotes.** When passing strings with spaces through `Start-Process`:
+
+1. **Best:** Use `-File` with separate array elements (GPT 5.2 recommendation)
+2. Use single quotes inside double quotes: `"... -Name 'Value' ..."`
+3. Or use double single-quotes inside: `'... -Name ''Value'' ...'`
+4. Or escape double quotes with backslash: `'... -Name \"Value\" ...'`
+5. Never assume double quotes will survive the hop with `-Command`
+
+*Initial diagnosis by Gemini 3 Pro. Definitive solution by GPT 5.2 Pro.*
+
+---
+
+## 2026-01-31 — Claude CLI Not Found in Spawned Windows
+
+### Problem: "The system cannot find the file specified"
+
+When the overnight build ran in a spawned PowerShell window, the execution loop failed with:
+```
+Exception calling "Start" with "0" argument(s): "The system cannot find the file specified"
+```
+
+The script was using `$psi.FileName = "claude"` which relies on PATH resolution.
+
+### Root Cause
+
+Spawned PowerShell windows via `Start-Process` may not inherit the same PATH as the parent session, especially for tools installed via npm that add themselves to user-specific PATH locations.
+
+### Solution
+
+Added explicit Claude path resolution in `loop.ps1`:
+
+```powershell
+$claudePath = "claude"
+$whereResult = & where.exe claude 2>$null
+if ($whereResult) {
+    $cmdPath = $whereResult | Where-Object { $_ -like "*.cmd" } | Select-Object -First 1
+    if ($cmdPath) { $claudePath = $cmdPath }
+    else { $claudePath = $whereResult | Select-Object -First 1 }
+} elseif (Test-Path "C:\Program Files\nodejs\claude.cmd") {
+    $claudePath = "C:\Program Files\nodejs\claude.cmd"
+}
+$psi.FileName = $claudePath
+```
+
+### Key Takeaway
+
+Don't assume PATH is consistent across spawned processes. For critical executables, resolve the full path explicitly or provide a hardcoded fallback.
+
+---
+
+## 2026-01-31 — Silent PowerShell Crashes from Non-Thread-Safe StringBuilder
+
+### Problem: PowerShell window disappears silently during Claude execution
+
+The overnight build process would run Claude, Claude would create files successfully, but then the entire PowerShell window would vanish with no error message. Logs showed "Claude started with PID: XXXX" but nothing after.
+
+### Root Cause: StringBuilder is NOT Thread-Safe
+
+When using `BeginOutputReadLine()` with event handlers, the callbacks run on thread pool threads, not the main PowerShell thread. If Claude outputs to stdout and stderr simultaneously (common), two threads call `StringBuilder.AppendLine()` concurrently.
+
+`StringBuilder` is **not thread-safe**. Concurrent writes cause:
+- Internal array corruption
+- `IndexOutOfRangeException` or `AccessViolationException`
+- Immediate process termination (unhandled exception on background thread)
+
+Standard `try-catch` blocks **cannot** catch exceptions in async event handlers because they run on different threads.
+
+### Solution: Use ConcurrentQueue Instead of StringBuilder
+
+Replace StringBuilder with thread-safe `ConcurrentQueue[string]`:
+
+```powershell
+# BEFORE (crashes)
+$outputBuilder = New-Object System.Text.StringBuilder
+$process.add_OutputDataReceived({
+    param($sender, $e)
+    if ($e.Data) { $outputBuilder.AppendLine($e.Data) }  # NOT THREAD-SAFE!
+})
+
+# AFTER (stable)
+$stdOutQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+$process.add_OutputDataReceived({
+    param($sender, $e)
+    if ($null -ne $e.Data) { $stdOutQueue.Enqueue($e.Data) }  # Thread-safe
+})
+
+# Drain to StringBuilder ON MAIN THREAD after process exits
+$process.WaitForExit()
+$process.WaitForExit()  # Second call drains async callbacks
+
+$sb = [System.Text.StringBuilder]::new()
+$line = $null
+while ($stdOutQueue.TryDequeue([ref]$line)) { [void]$sb.AppendLine($line) }
+$output = $sb.ToString()
+```
+
+### Additional Fixes Applied
+
+1. **Wrap event handler internals in try-catch** — Prevents any remaining edge cases from crashing
+2. **Add try-catch around Invoke-ClaudeWithTimeout** — Catches exceptions and logs them
+3. **Use `[void]` on AppendLine** — Prevents return value from polluting output
+
+### Diagnostic Tip
+
+To confirm this issue, check **Windows Event Viewer** → **Windows Logs** → **Application** for "Application Error" at the crash time. Look for `System.IndexOutOfRangeException` in `System.Text.StringBuilder`.
+
+*Diagnosis by Gemini 3 Pro.*
+
+---
+
+## 2026-01-31 — PowerShell Async Event Handlers Don't Fire
+
+### Problem: ConcurrentQueue remains empty despite process producing output
+
+After implementing the ConcurrentQueue fix (above), output was still empty. Testing revealed:
+- `add_OutputDataReceived` event handlers **never fire**
+- Queue remains at count 0 despite the child process successfully outputting text
+- This isn't a scoping issue — even with `$script:`, `GetNewClosure()`, or file logging, callbacks don't execute
+
+### Root Cause: PowerShell's Event Handler Implementation is Broken
+
+PowerShell's `add_OutputDataReceived` and `add_ErrorDataReceived` methods don't reliably invoke scriptblock callbacks. This is a known limitation where:
+1. The .NET event fires correctly
+2. But PowerShell's scriptblock marshaling to handle the event fails silently
+3. No error is thrown — the callback simply never runs
+
+### Verification Test
+
+```powershell
+$p.add_OutputDataReceived({
+    param($sender, $eventArgs)
+    "Event fired: $($eventArgs.Data)" | Out-File "C:\test\event_log.txt" -Append
+    $queue.Enqueue($eventArgs.Data)
+})
+$p.BeginOutputReadLine()
+$p.WaitForExit()
+# Result: log file never updated, queue empty
+```
+
+### Solution: Use Runspaces for Parallel Synchronous Reading
+
+Replace async events with synchronous `ReadToEnd()` calls running in parallel runspaces:
+
+```powershell
+# Create runspace pool for parallel reading
+$runspacePool = [runspacefactory]::CreateRunspacePool(1, 2)
+$runspacePool.Open()
+
+# Runspace for stdout
+$stdoutScript = { param($reader); $reader.ReadToEnd() }
+$stdoutPS = [powershell]::Create().AddScript($stdoutScript).AddArgument($process.StandardOutput)
+$stdoutPS.RunspacePool = $runspacePool
+$stdoutAsync = $stdoutPS.BeginInvoke()
+
+# Runspace for stderr
+$stderrScript = { param($reader); $reader.ReadToEnd() }
+$stderrPS = [powershell]::Create().AddScript($stderrScript).AddArgument($process.StandardError)
+$stderrPS.RunspacePool = $runspacePool
+$stderrAsync = $stderrPS.BeginInvoke()
+
+# Wait for process
+$process.WaitForExit($TimeoutMs)
+
+# Collect results (with timeout to prevent hang)
+if ($stdoutAsync.AsyncWaitHandle.WaitOne(5000)) {
+    $stdoutContent = $stdoutPS.EndInvoke($stdoutAsync)
+}
+if ($stderrAsync.AsyncWaitHandle.WaitOne(5000)) {
+    $stderrContent = $stderrPS.EndInvoke($stderrAsync)
+}
+
+# Cleanup
+$stdoutPS.Dispose(); $stderrPS.Dispose()
+$runspacePool.Close(); $runspacePool.Dispose()
+```
+
+### Why Runspaces Work
+
+1. **No deadlock** — stdout and stderr are read in parallel, preventing buffer deadlock
+2. **Synchronous reading** — `ReadToEnd()` is reliable and well-tested
+3. **Proper isolation** — each runspace is a separate PowerShell instance
+4. **Timeout safety** — `AsyncWaitHandle.WaitOne()` prevents infinite waits
+
+### Key Takeaway
+
+**Never use PowerShell's async event handlers (`add_OutputDataReceived`, `add_ErrorDataReceived`) for capturing process output.** They're unreliable. Use:
+1. Runspaces with synchronous `ReadToEnd()` (best)
+2. Jobs with `Start-Job` (alternative)
+3. Temp files with redirection (simple but slower)
+
+*Discovered through systematic testing.*
+
+---
+
+## 2026-02-01 — Always Launch Ship Asleep in a Visible Window
+
+### Requirement
+
+When running ship_asleep from Claude Code or any automated context, **always launch it in a separate visible PowerShell window** so the user can monitor progress in real-time.
+
+### Why
+
+- Background processes hide progress from the user
+- Users want to see the PRD generation, task execution, and any errors live
+- Debugging is much easier when you can watch the output stream
+
+### How
+
+```powershell
+# Launch in new visible window
+Start-Process powershell -ArgumentList @(
+    '-ExecutionPolicy', 'Bypass'
+    '-NoExit'
+    '-Command', "cd C:\ship_asleep\scripts; .\auto-compound.ps1 -ProjectPath 'C:\your-project' -Verbose"
+)
+```
+
+**Key flags:**
+- `-NoExit` keeps window open after completion (for reviewing results)
+- `-Verbose` shows detailed progress
+- Separate window = user can watch while doing other work
+
+### Document This
+
+Add to any Claude Code instructions or CLAUDE.md files that use ship_asleep:
+```
+When running ship_asleep, always launch in a separate visible window using Start-Process powershell with -NoExit flag.
+```
+
+---
+
+## 2026-02-01 — Age-Based Process Cleanup Was Killing Active Tasks (THE BUG)
+
+### Problem: 3 of 8 tasks failed with ZERO output captured
+
+During an overnight run implementing the Plant Passport feature, tasks 4, 7, and 8 all failed with:
+- Timed out after 600 seconds OR exited with code 1
+- **Empty stdout/stderr** - no output captured at all
+- Process PIDs were assigned and logged, but nothing was ever written
+
+The code was actually working - files were created, build passed - but the task statuses showed "failed".
+
+### Root Cause: The cleanup code was killing active processes
+
+The loop had "proactive cleanup" that killed node processes older than 5 minutes:
+
+```powershell
+# THE BUG - in loop.ps1 before each task
+$nodeProcesses = Get-Process -Name node -ErrorAction SilentlyContinue
+if ($nodeProcesses.Count -gt 5) {
+    foreach ($proc in $nodeProcesses) {
+        if ((Get-Date) - $proc.StartTime -gt [TimeSpan]::FromMinutes(5)) {
+            & taskkill /F /T /PID $proc.Id 2>$null  # KILLS ACTIVE TASKS!
+        }
+    }
+}
+```
+
+**Why this killed tasks:**
+- Integration-heavy tasks (API endpoints, DB work, npm build) take >5 minutes
+- A task starting at 11:30 would have its node process killed at 11:35 by cleanup
+- With `--print` flag, killing mid-execution = zero output (buffer never flushes)
+
+**Evidence that confirmed this:**
+- Log showed "Cleaning up 6-7 stale node processes" right before failures
+- Failed tasks were all long-running (API endpoints, npm build)
+- Successful tasks were short (create types, create components)
+
+### The Fix
+
+**Removed the age-based cleanup entirely.** Process cleanup now only happens:
+1. Via `taskkill /T /PID` on the specific PID when a task times out
+2. Never based on process age
+3. Never by process name globally
+
+```powershell
+# REMOVED - this was the bug
+# $nodeProcesses = Get-Process -Name node ...
+# foreach ($proc in $nodeProcesses) { taskkill... }
+
+# NOTE in loop.ps1:
+# Removed age-based "stale node process" cleanup
+# This was THE BUG - it killed long-running tasks mid-execution!
+```
+
+### Multi-Model Diagnosis
+
+This bug was diagnosed by consulting both **Gemini 3 Pro** and **GPT 5.2 Pro**:
+
+**Gemini's diagnosis:** `--print` buffering hides crashes/hangs
+- True but not the root cause
+
+**GPT's diagnosis:** The cleanup is killing still-active processes
+- Correct! This explained the pattern perfectly:
+  - "Cleanup" log entries right before failures
+  - Long tasks failing, short tasks succeeding
+  - Code actually working despite "failed" status
+
+**Key insight from GPT:**
+> "Integration-heavy tasks run >5 minutes. Your cleanup kills processes older than 5 minutes. So a long-running task's own Node process becomes 'stale' by your definition and gets killed mid-flight."
+
+### Additional Fixes Applied
+
+1. **Removed `--print` flag** — enables streaming output instead of buffered
+2. **Added visible window launch** — user can observe Claude running in separate window
+3. **Event-based output capture** — replaced runspaces with `Register-ObjectEvent` (though later switched to file-based capture for visible window mode)
+4. **Double WaitForExit pattern** — ensures async readers flush completely
+
+### Key Takeaway
+
+**Never kill processes by age or name in a parallel/concurrent system.** Only kill:
+- The specific PID you spawned
+- Using process tree kill (`taskkill /T`)
+- When that specific task times out or errors
+
+*Diagnosed by GPT 5.2 Pro, confirmed by Gemini 3 Pro, fixed 2026-02-01.*
+
+---
+
+## 2026-02-01 — Visible Window Mode for Observability
+
+### Requirement
+
+When running auto-compound from Claude Code, launch Claude tasks in a **separate visible PowerShell window** so the user can watch progress in real-time.
+
+### Why
+
+- Hidden background processes make debugging impossible
+- Users want to see what Claude is doing during long tasks
+- Cancelled bash commands from Claude Code would kill background processes mid-task
+
+### Implementation
+
+The `Invoke-ClaudeWithTimeout` function now:
+1. Creates a wrapper PowerShell script
+2. Launches it in a new visible window via `Start-Process`
+3. The wrapper runs Claude and tees output to a temp file
+4. Main script reads the temp file after completion
+
+```powershell
+# Wrapper script shows output AND captures it
+$wrapperContent = @"
+`$Host.UI.RawUI.WindowTitle = "Claude Task - PID `$PID"
+Write-Host "=== Claude Task Started ===" -ForegroundColor Cyan
+Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions 2>&1 |
+    Tee-Object -FilePath "$outputFile"
+Write-Host "=== Claude Task Finished ===" -ForegroundColor Cyan
+"@
+
+# Launch in visible window
+Start-Process -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $wrapperScript `
+    -PassThru
+```
+
+### Benefits
+
+- User sees Claude's work in real-time
+- Output is still captured for logging/verification
+- Process survives if Claude Code bash command is cancelled
+- Window stays open with "press any key" for post-mortem review
+
+*Implemented 2026-02-01.*

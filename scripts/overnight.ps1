@@ -7,6 +7,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$ProjectPath,
 
+    [string]$ProjectName = "",
+
     [int]$MaxIterations = 25,
 
     [string[]]$QualityChecks = @(),
@@ -25,7 +27,9 @@ Write-Host "============================================" -ForegroundColor Magen
 Write-Host "   SHIP WHILE YOU SLEEP - Overnight Build" -ForegroundColor Magenta
 Write-Host "============================================" -ForegroundColor Magenta
 Write-Host ""
-Write-Host "Project: $ProjectPath" -ForegroundColor Cyan
+$displayName = if ($ProjectName) { $ProjectName } else { Split-Path $ProjectPath -Leaf }
+Write-Host "Project: $displayName" -ForegroundColor Cyan
+Write-Host "Path: $ProjectPath" -ForegroundColor DarkGray
 Write-Host "Max iterations: $MaxIterations" -ForegroundColor Cyan
 Write-Host ""
 
@@ -84,6 +88,7 @@ Write-Host ""
 $autoCompoundScript = Join-Path $PSScriptRoot "auto-compound.ps1"
 $autoCompoundArgs = @{
     ProjectPath = $ProjectPath
+    ProjectName = $ProjectName
     MaxIterations = $MaxIterations
 }
 if ($QualityChecks.Count -gt 0) {

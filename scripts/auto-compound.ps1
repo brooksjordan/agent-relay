@@ -11,6 +11,7 @@
 [CmdletBinding()]
 param(
     [string]$ProjectPath = ".",
+    [string]$ProjectName = "",
     [string]$ReportsDir = "reports",
     [string]$TasksDir = "tasks",
     [int]$MaxIterations = 25,
@@ -57,7 +58,9 @@ function Write-Log {
 # --- Main Execution ---
 
 Write-Log "=== Auto-Compound Started ===" "STAGE"
-Write-Log "Project: $ProjectPath"
+$displayName = if ($ProjectName) { $ProjectName } else { Split-Path $ProjectPath -Leaf }
+Write-Log "Project: $displayName"
+Write-Log "Path: $ProjectPath"
 Write-Log "Max iterations: $MaxIterations"
 
 Push-Location $ProjectPath
