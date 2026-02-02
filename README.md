@@ -6,9 +6,11 @@
 
 > 🔁 **Merge Before Moving On:** Each overnight run creates a feature branch. **Merge completed PRs to main before starting the next priority.** Otherwise, work gets orphaned when the next run resets to main. Check `gh pr list` before running.
 
+> ✅ **Preflight Safeguards (v3):** Stage 0 now blocks the run if uncommitted priority files would be deleted by `git reset`. Commit your priority report before running.
+
 Autonomous overnight development using Claude Code CLI. Inspired by [Ryan Carson's methodology](https://x.com/ryancarson/status/2016520542723924279).
 
-**Tested and working as of 2026-01-31.** (v2: timeouts, retries, transcripts)
+**Tested and working as of 2026-02-01.** (v3: preflight safeguards, visible windows, streaming fixes)
 
 > **Disclaimer:** This project is not affiliated with or endorsed by Anthropic. Users must comply with Anthropic's terms of service and usage policies.
 
