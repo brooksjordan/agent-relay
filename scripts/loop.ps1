@@ -212,84 +212,109 @@ function Invoke-ClaudeWithTimeout {
         Error = $null
     }
 
-    # Create a temp file for the prompt
-    $promptFile = Join-Path $env:TEMP "claude_prompt_$(Get-Date -Format 'yyyyMMddHHmmss').txt"
+    # Create temp files for prompt and output
+    $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $promptFile = Join-Path $env:TEMP "claude_prompt_$timestamp.txt"
+    $outputFile = Join-Path $env:TEMP "claude_output_$timestamp.txt"
+    $exitCodeFile = Join-Path $env:TEMP "claude_exitcode_$timestamp.txt"
+
     $Prompt | Out-File $promptFile -Encoding UTF8
 
-    # Start Claude as a process so we can track PID and enforce timeout
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = "claude"
-    $psi.Arguments = "--print --dangerously-skip-permissions"
-    $psi.WorkingDirectory = $WorkingDir
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $psi
-
-    # Capture output asynchronously
-    $outputBuilder = New-Object System.Text.StringBuilder
-    $errorBuilder = New-Object System.Text.StringBuilder
-
-    $outputHandler = {
-        if (-not [String]::IsNullOrEmpty($EventArgs.Data)) {
-            $Event.MessageData.AppendLine($EventArgs.Data)
+    # Find Claude executable
+    $claudePath = "claude"
+    $whereResult = & where.exe claude 2>$null
+    if ($whereResult) {
+        $cmdPath = $whereResult | Where-Object { $_ -like "*.cmd" } | Select-Object -First 1
+        if ($cmdPath) {
+            $claudePath = $cmdPath
+        } else {
+            $claudePath = $whereResult | Select-Object -First 1
         }
+        Write-Log "Found Claude at: $claudePath"
+    } elseif (Test-Path "C:\Program Files\nodejs\claude.cmd") {
+        $claudePath = "C:\Program Files\nodejs\claude.cmd"
+        Write-Log "Using fallback Claude path: $claudePath"
+    } else {
+        Write-Log "WARNING: Claude not found in PATH or default location" "WARN"
     }
 
-    $process.add_OutputDataReceived({
-        param($sender, $e)
-        if (-not [String]::IsNullOrEmpty($e.Data)) {
-            $outputBuilder.AppendLine($e.Data)
-        }
-    })
+    # Create a wrapper script that runs Claude in a visible window and captures output
+    $wrapperScript = Join-Path $env:TEMP "claude_wrapper_$timestamp.ps1"
 
-    $process.add_ErrorDataReceived({
-        param($sender, $e)
-        if (-not [String]::IsNullOrEmpty($e.Data)) {
-            $errorBuilder.AppendLine($e.Data)
-        }
-    })
+    # Write wrapper script that:
+    # 1. Sets window title for easy identification
+    # 2. Runs Claude with prompt piped in
+    # 3. Tees output to file AND console (so user can watch)
+    # 4. Saves exit code
+    $wrapperContent = @"
+`$Host.UI.RawUI.WindowTitle = "Claude Task - PID `$PID"
+`$ErrorActionPreference = "Continue"
+`$OutputEncoding = [System.Text.Encoding]::UTF8
+
+Write-Host "=== Claude Task Started ===" -ForegroundColor Cyan
+Write-Host "Working Directory: $WorkingDir" -ForegroundColor Gray
+Write-Host "Timeout: $TimeoutSeconds seconds" -ForegroundColor Gray
+Write-Host "=============================`n" -ForegroundColor Cyan
+
+Set-Location "$WorkingDir"
+
+# Run Claude with TRUE STREAMING - output displays line-by-line as it happens
+try {
+    Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath "$outputFile"
+    `$LASTEXITCODE | Out-File "$exitCodeFile" -Encoding UTF8
+} catch {
+    Write-Host "`nERROR: `$_" -ForegroundColor Red
+    `$_.ToString() | Out-File "$outputFile"
+    "1" | Out-File "$exitCodeFile" -Encoding UTF8
+}
+
+Write-Host "`n=== Claude Task Finished ===" -ForegroundColor Cyan
+# Window closes automatically - no blocking for overnight runs
+"@
+
+    $wrapperContent | Out-File $wrapperScript -Encoding UTF8
 
     try {
-        $process.Start() | Out-Null
+        # Launch in a NEW VISIBLE WINDOW so user can observe
+        Write-Log "Launching Claude in visible window..."
+        $process = Start-Process -FilePath "powershell.exe" `
+            -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $wrapperScript `
+            -WorkingDirectory $WorkingDir `
+            -PassThru
+
         $claudePid = $process.Id
-        Write-Log "Claude started with PID: $claudePid"
+        Write-Log "Claude window started with PID: $claudePid"
 
-        # Send prompt via stdin
-        $process.StandardInput.Write($Prompt)
-        $process.StandardInput.Close()
-
-        # Begin async read
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-
-        # Wait with timeout
+        # Wait for process with timeout
         $completed = $process.WaitForExit($TimeoutSeconds * 1000)
 
         if (-not $completed) {
-            # TIMEOUT - kill the specific process and its children
-            Write-Log "TIMEOUT after $TimeoutSeconds seconds - killing PID $claudePid" "WARN"
+            Write-Log "TIMEOUT after $TimeoutSeconds seconds - killing process tree PID $claudePid" "WARN"
             $result.TimedOut = $true
 
             try {
-                # Kill process tree (Windows-specific)
                 & taskkill /F /T /PID $claudePid 2>$null
                 Start-Sleep -Seconds 2
             } catch {
-                Write-Log "Failed to kill process: $_" "WARN"
+                Write-Log "Failed to kill process tree: $_" "WARN"
             }
 
-            $result.Output = $outputBuilder.ToString()
             $result.ExitCode = -1
             $result.Error = "Task timed out after $TimeoutSeconds seconds"
         } else {
-            # Completed normally
-            $result.Output = $outputBuilder.ToString()
-            $result.ExitCode = $process.ExitCode
+            # Read exit code from file
+            if (Test-Path $exitCodeFile) {
+                $exitCodeStr = (Get-Content $exitCodeFile -Raw).Trim()
+                $result.ExitCode = [int]$exitCodeStr
+            } else {
+                $result.ExitCode = $process.ExitCode
+            }
+        }
+
+        # Read captured output
+        Start-Sleep -Milliseconds 500
+        if (Test-Path $outputFile) {
+            $result.Output = Get-Content $outputFile -Raw -Encoding UTF8
         }
 
         # Save transcript
@@ -311,7 +336,7 @@ $Prompt
 $($result.Output)
 
 --- STDERR ---
-$($errorBuilder.ToString())
+
 ================================================================================
 "@
             $transcript | Out-File $TranscriptPath -Encoding UTF8
@@ -323,9 +348,15 @@ $($errorBuilder.ToString())
         Write-Log "Claude execution error: $($result.Error)" "ERROR"
     } finally {
         if ($process -and -not $process.HasExited) {
-            try { $process.Kill() } catch {}
+            try {
+                & taskkill /F /T /PID $process.Id 2>$null
+            } catch {}
         }
+        # Clean up temp files
         Remove-Item $promptFile -ErrorAction SilentlyContinue
+        Remove-Item $outputFile -ErrorAction SilentlyContinue
+        Remove-Item $exitCodeFile -ErrorAction SilentlyContinue
+        Remove-Item $wrapperScript -ErrorAction SilentlyContinue
     }
 
     return $result
@@ -518,34 +549,36 @@ When done, output one of:
     # Generate transcript filename
     $transcriptFile = Join-Path $TranscriptDir "task-$($task.id)-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
 
-    # Clean up stale node processes BEFORE running Claude (proactive, not reactive)
-    # Only kill processes older than 5 minutes to avoid killing active dev servers
-    $nodeProcesses = Get-Process -Name node -ErrorAction SilentlyContinue
-    if ($nodeProcesses -and $nodeProcesses.Count -gt 5) {
-        Write-Log "Cleaning up $($nodeProcesses.Count) stale node processes..." "WARN"
-        foreach ($proc in $nodeProcesses) {
-            try {
-                # Only kill if running > 5 minutes (likely stale)
-                if ((Get-Date) - $proc.StartTime -gt [TimeSpan]::FromMinutes(5)) {
-                    & taskkill /F /T /PID $proc.Id 2>$null
-                }
-            } catch {
-                # Ignore - process may have already exited
-            }
-        }
-        Start-Sleep -Seconds 2
-    }
+    # NOTE: Removed age-based "stale node process" cleanup
+    # This was THE BUG - it killed long-running tasks mid-execution!
+    # Integration-heavy tasks (API endpoints, DB work, npm build) take >5 minutes,
+    # so they were being killed by the "older than 5 minutes" cleanup.
+    # Process cleanup now only happens via taskkill /T on specific PIDs during timeout.
 
     # Run Claude with timeout and PID tracking
-    $claudeResult = Invoke-ClaudeWithTimeout `
-        -Prompt $prompt `
-        -WorkingDir $WorkspaceRoot `
-        -TimeoutSeconds $TaskTimeoutSeconds `
-        -TranscriptPath $transcriptFile
+    # Wrap in try-catch to prevent script crash on unexpected errors
+    try {
+        $claudeResult = Invoke-ClaudeWithTimeout `
+            -Prompt $prompt `
+            -WorkingDir $WorkspaceRoot `
+            -TimeoutSeconds $TaskTimeoutSeconds `
+            -TranscriptPath $transcriptFile
 
-    $claudeOutput = $claudeResult.Output
-    $claudeExitCode = $claudeResult.ExitCode
-    $claudeTimedOut = $claudeResult.TimedOut
+        $claudeOutput = $claudeResult.Output
+        $claudeExitCode = $claudeResult.ExitCode
+        $claudeTimedOut = $claudeResult.TimedOut
+    } catch {
+        Write-Log "CRITICAL: Invoke-ClaudeWithTimeout threw exception: $_" "ERROR"
+        Write-Log "Stack trace: $($_.ScriptStackTrace)" "ERROR"
+        $claudeOutput = ""
+        $claudeExitCode = -99
+        $claudeTimedOut = $false
+
+        # Save error to transcript file
+        if ($transcriptFile) {
+            "EXCEPTION during Claude execution:`n$_`n`nStack:`n$($_.ScriptStackTrace)" | Out-File $transcriptFile -Encoding UTF8
+        }
+    }
 
     # Log output (truncated)
     $outputPreview = if ($claudeOutput.Length -gt 500) {
@@ -593,6 +626,11 @@ When done, output one of:
     } elseif ($claudeOutput -match "TASK_BLOCKED:\s*(.+)") {
         $taskBlocked = $true
         $blockReason = $Matches[1]
+    } elseif ($claudeExitCode -eq -99) {
+        # Our exception marker
+        $taskBlocked = $true
+        $blockReason = "Claude execution threw an exception - check transcript"
+        Write-Log "Task $($task.id) blocked due to exception" "ERROR"
     } elseif ($claudeExitCode -ne 0) {
         $taskBlocked = $true
         $blockReason = "Claude exited with code $claudeExitCode"

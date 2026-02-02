@@ -11,6 +11,7 @@
 [CmdletBinding()]
 param(
     [string]$ProjectPath = ".",
+    [string]$ProjectName = "",
     [string]$ReportsDir = "reports",
     [string]$TasksDir = "tasks",
     [int]$MaxIterations = 25,
@@ -57,12 +58,57 @@ function Write-Log {
 # --- Main Execution ---
 
 Write-Log "=== Auto-Compound Started ===" "STAGE"
-Write-Log "Project: $ProjectPath"
+$displayName = if ($ProjectName) { $ProjectName } else { Split-Path $ProjectPath -Leaf }
+Write-Log "Project: $displayName"
+Write-Log "Path: $ProjectPath"
 Write-Log "Max iterations: $MaxIterations"
 
 Push-Location $ProjectPath
 
 try {
+    # ========================================
+    # STAGE 0: Preflight checks (before any destructive operations)
+    # ========================================
+    Write-Log "STAGE 0: Preflight checks" "STAGE"
+
+    $reportsFullDir = Join-Path $ProjectPath $ReportsDir
+
+    # Check for untracked priority files that would be wiped by git clean
+    $untrackedPriority = git ls-files --others --exclude-standard -- "$reportsFullDir/priority-*.md" 2>$null
+    if ($untrackedPriority) {
+        Write-Log "PREFLIGHT FAILED: Untracked priority report detected!" "ERROR"
+        Write-Log "File: $untrackedPriority" "ERROR"
+        Write-Log "" "ERROR"
+        Write-Log "The git reset/clean in Stage 1 would DELETE this file." "ERROR"
+        Write-Log "Commit it first:" "ERROR"
+        Write-Log "  git add $untrackedPriority" "ERROR"
+        Write-Log "  git commit -m 'Add priority report'" "ERROR"
+        Write-Log "" "ERROR"
+        Write-Log "Then re-run auto-compound." "ERROR"
+        exit 1
+    }
+
+    # Check for any uncommitted changes to priority files
+    $modifiedPriority = git diff --name-only -- "$reportsFullDir/priority-*.md" 2>$null
+    if ($modifiedPriority) {
+        Write-Log "PREFLIGHT FAILED: Modified priority report detected!" "ERROR"
+        Write-Log "File: $modifiedPriority" "ERROR"
+        Write-Log "Commit your changes before running auto-compound." "ERROR"
+        exit 1
+    }
+
+    # Preview what git clean would delete and warn if it includes important files
+    $cleanPreview = git clean -nfd 2>$null
+    if ($cleanPreview -match "priority.*\.md") {
+        Write-Log "PREFLIGHT FAILED: git clean would delete priority files!" "ERROR"
+        Write-Log "Preview of files to be deleted:" "WARN"
+        Write-Log $cleanPreview "WARN"
+        Write-Log "Commit important files before running auto-compound." "ERROR"
+        exit 1
+    }
+
+    Write-Log "Preflight checks passed" "SUCCESS"
+
     # ========================================
     # STAGE 1: Git setup - ensure clean state
     # ========================================
