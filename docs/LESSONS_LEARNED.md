@@ -882,3 +882,69 @@ Before starting a new auto-compound run:
 *Discovered 2026-02-01 when admin pages were found orphaned in git history.*
 
 ---
+
+## 2026-02-01 — Preflight Safeguards: Block Run if Priority File Would Be Deleted
+
+### Problem: New priority file wiped before pipeline could read it
+
+We asked GPT 5.2 Pro to create comprehensive priorities for a rare orchid e-commerce site. The priorities were saved to `reports/priority-2026-02-01.md` but **not committed**.
+
+When auto-compound ran:
+1. Stage 1 executed `git reset --hard HEAD && git clean -fd`
+2. This deleted the new priority file (untracked)
+3. Pipeline found only the old `priority-2026-01-31.md`
+4. Built the wrong features (passport enhancements instead of homepage/catalog/checkout)
+
+### Root Cause
+
+The pipeline's most important input (the priority file) lived in the working tree, but Stage 1 wipes the working tree. **Design mismatch.**
+
+### Solution: Stage 0 Preflight Checks
+
+Added a new Stage 0 that runs BEFORE any destructive git operations:
+
+```powershell
+# Stage 0: Preflight checks
+$untrackedPriority = git ls-files --others --exclude-standard -- "$reportsFullDir/priority-*.md"
+if ($untrackedPriority) {
+    Write-Log "PREFLIGHT FAILED: Untracked priority report detected!" "ERROR"
+    Write-Log "Commit it first: git add $untrackedPriority && git commit" "ERROR"
+    exit 1
+}
+
+$modifiedPriority = git diff --name-only -- "$reportsFullDir/priority-*.md"
+if ($modifiedPriority) {
+    Write-Log "PREFLIGHT FAILED: Modified priority report detected!" "ERROR"
+    exit 1
+}
+
+$cleanPreview = git clean -nfd
+if ($cleanPreview -match "priority.*\.md") {
+    Write-Log "PREFLIGHT FAILED: git clean would delete priority files!" "ERROR"
+    exit 1
+}
+```
+
+### GPT 5.2 Pro Recommendations (Implemented)
+
+GPT 5.2 Pro reviewed the failure and recommended:
+1. **Preflight block on untracked priority files** ✅ Implemented
+2. **Fail if working tree isn't clean** ✅ Implemented
+3. **`git clean -nfd` preview check** ✅ Implemented
+4. **Treat run input as immutable artifact** — priority must be committed
+
+Additional recommendations for future:
+- Require explicit `-PriorityFile` argument OR pick latest by `git log`
+- Add a "Run Manifest" recording priority file commit SHA
+- Consider separate worktree for builds
+
+### Key Takeaway
+
+**Pipeline inputs must survive the pipeline's own destructive operations.** Either:
+- Commit inputs before running (current fix)
+- Or read inputs from HEAD, not working tree
+- Or store inputs outside the wipe zone
+
+*Diagnosed by GPT 5.2 Pro, implemented 2026-02-01.*
+
+---

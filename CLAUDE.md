@@ -50,6 +50,8 @@ C:\ship_asleep\
 
 5. **Visible windows for observability** — When launching auto-compound, always use a separate visible PowerShell window so users can monitor progress.
 
+6. **Commit priority files before running** — Auto-compound does `git reset --hard` which wipes untracked files. Priority reports MUST be committed or they'll be deleted before the pipeline reads them. Stage 0 preflight now blocks this.
+
 ### Recent Fixes (2026-02-01)
 
 | Fix | Why It Mattered |
@@ -59,6 +61,7 @@ C:\ship_asleep\
 | Added visible window mode | Users can watch Claude work in real-time |
 | True streaming output | `Tee-Object` directly in pipeline, not via variable |
 | Removed "press any key" prompt | Allows unattended overnight runs |
+| **Added Stage 0 preflight checks** | Blocks run if untracked/modified priority files would be wiped by git reset |
 
 ## Development Conventions
 
