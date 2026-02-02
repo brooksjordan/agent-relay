@@ -389,10 +389,16 @@ Write the JSON file now.
     # Push branch (if remote exists)
     $hasRemote = git remote 2>$null
     if ($hasRemote) {
-        git push -u origin $branchName 2>&1 | Out-Null
+        # Temporarily allow errors - git push outputs to stderr even on success
+        $ErrorActionPreference = "Continue"
+        $pushOutput = git push -u origin $branchName 2>&1
+        $pushExitCode = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
 
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log "Failed to push branch" "WARN"
+        if ($pushExitCode -ne 0) {
+            Write-Log "Failed to push branch: $pushOutput" "WARN"
+        } else {
+            Write-Log "Pushed branch to origin" "SUCCESS"
         }
     } else {
         Write-Log "No remote configured, skipping push" "WARN"
@@ -432,14 +438,21 @@ $($analysis.description)
         $prBodyFile = Join-Path $env:TEMP "pr_body_$(Get-Date -Format 'yyyyMMdd_HHmmss').md"
         $prBody | Out-File $prBodyFile -Encoding UTF8
 
+        # Temporarily allow errors - gh outputs to stderr on failure
+        $ErrorActionPreference = "Continue"
         $ghOutput = & gh pr create --draft --title $prTitle --body-file $prBodyFile --base main 2>&1
+        $ghExitCode = $LASTEXITCODE
 
-        if ($LASTEXITCODE -eq 0) {
+        if ($ghExitCode -eq 0) {
+            $ErrorActionPreference = "Stop"
             Write-Log "PR created: $ghOutput" "SUCCESS"
         } else {
             # Try with master
             $ghOutput = & gh pr create --draft --title $prTitle --body-file $prBodyFile --base master 2>&1
-            if ($LASTEXITCODE -eq 0) {
+            $ghExitCode = $LASTEXITCODE
+            $ErrorActionPreference = "Stop"
+
+            if ($ghExitCode -eq 0) {
                 Write-Log "PR created: $ghOutput" "SUCCESS"
             } else {
                 Write-Log "Failed to create PR: $ghOutput" "WARN"
