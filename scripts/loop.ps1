@@ -243,9 +243,10 @@ function Invoke-ClaudeWithTimeout {
 
     # Write wrapper script that:
     # 1. Sets window title for easy identification
-    # 2. Runs Claude with prompt piped in
+    # 2. Runs Claude via winpty (PTY) so Ink can use raw mode while we pipe stdin
     # 3. Uses ForEach-Object to stream output line-by-line to console AND file
     # 4. Saves exit code
+    $winptyPath = "C:\Program Files\Git\usr\bin\winpty.exe"
     $wrapperContent = @"
 `$Host.UI.RawUI.WindowTitle = "Claude Task - PID `$PID"
 `$ErrorActionPreference = "Continue"
@@ -258,10 +259,10 @@ Write-Host "=============================`n" -ForegroundColor Cyan
 
 Set-Location "$WorkingDir"
 
-# Run Claude with streaming via ForEach-Object
-# Processes each line immediately: write to console + append to file
+# Run Claude through winpty (pseudo-terminal) for streaming + raw mode support
+# winpty creates a PTY so Ink can enable raw mode even though we pipe stdin
 try {
-    Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions 2>&1 | ForEach-Object {
+    Get-Content "$promptFile" -Raw | & "$winptyPath" "$claudePath" --dangerously-skip-permissions 2>&1 | ForEach-Object {
         [Console]::WriteLine(`$_)
         `$_ | Add-Content -Path "$outputFile" -Encoding UTF8
     }
