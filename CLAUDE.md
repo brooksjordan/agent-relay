@@ -48,17 +48,20 @@ C:\ship_asleep\
 
 4. **Verify outcomes** — Don't trust "TASK_COMPLETE" claims. Check files exist, are non-empty, and were modified recently.
 
-5. **Visible windows for observability** — When launching auto-compound, always use a separate visible PowerShell window so users can monitor progress.
+5. **MANDATORY: Visible window for every build** — The build process MUST always run in a separate visible PowerShell window. This is not optional. The Architect needs to monitor progress in real-time. Never run auto-compound or overnight.ps1 inline, hidden, or as a background job. Always launch via `Start-Process powershell` with a visible window.
 
-### Recent Fixes (2026-02-01)
+6. **Native command stderr is not an error** — `git`, `gh`, and other native commands write progress info to stderr even on success. Never rely on `$ErrorActionPreference = "Stop"` around native commands. Always use `$ErrorActionPreference = "Continue"` and check `$LASTEXITCODE` explicitly.
 
-| Fix | Why It Mattered |
-|-----|-----------------|
-| Removed age-based node cleanup | Was killing active long-running tasks mid-execution |
-| Removed `--print` flag | Enables true streaming instead of buffered output |
-| Added visible window mode | Users can watch Claude work in real-time |
-| True streaming output | `Tee-Object` directly in pipeline, not via variable |
-| Removed "press any key" prompt | Allows unattended overnight runs |
+### Recent Fixes
+
+| Date | Fix | Why It Mattered |
+|------|-----|-----------------|
+| 2026-02-01 | Removed age-based node cleanup | Was killing active long-running tasks mid-execution |
+| 2026-02-01 | Removed `--print` flag | Enables true streaming instead of buffered output |
+| 2026-02-01 | Added visible window mode | Users can watch Claude work in real-time |
+| 2026-02-01 | True streaming output | `Tee-Object` directly in pipeline, not via variable |
+| 2026-02-01 | Removed "press any key" prompt | Allows unattended overnight runs |
+| 2026-02-03 | Fixed Stage 7 native command stderr bug | `git push` stderr was causing false termination, aborting PR creation after successful push |
 
 ## Development Conventions
 
@@ -123,12 +126,14 @@ This project follows the Computronium methodology from `C:\computronium\CLAUDE.m
 
 ### Running for a project
 ```powershell
-# From any location
-C:\ship_asleep\scripts\auto-compound.ps1 -ProjectPath "C:\your-project"
+# MANDATORY: Always launch in a separate visible window. See below.
+# Do NOT run auto-compound inline or hidden. The Architect must be able to monitor.
 ```
 
-### Launching in visible window (recommended)
+### Launching in visible window (MANDATORY)
 ```powershell
+# This is the ONLY correct way to run the build pipeline.
+# A separate visible window is required so the Architect can monitor progress.
 Start-Process powershell -ArgumentList @(
     '-ExecutionPolicy', 'Bypass'
     '-NoExit'
@@ -149,6 +154,8 @@ Start-Process powershell -ArgumentList @(
 - Don't use PowerShell async event handlers — they don't fire reliably
 - Don't run destructive git commands on main branch
 - Don't assume PATH is inherited by spawned processes
+- Don't run the build pipeline hidden or inline — ALWAYS use a separate visible window
+- Don't use `$ErrorActionPreference = "Stop"` around native commands (git, gh, claude) — they write to stderr on success and will cause false termination
 
 ## Files That Matter Most
 
@@ -161,5 +168,5 @@ Start-Process powershell -ArgumentList @(
 
 ---
 
-**Last updated:** 2026-02-01
-**Status:** Working. 8/8 tasks completed on test_orchids run.
+**Last updated:** 2026-02-03
+**Status:** Working. v2-stable tag. 7/7 tasks on agent_roi P04, 8/8 on test_orchids.
