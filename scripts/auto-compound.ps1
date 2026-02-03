@@ -441,6 +441,87 @@ $($analysis.description)
         Write-Log "Changes committed to branch: $branchName" "SUCCESS"
     }
 
+    # ========================================
+    # STAGE 8: Mark priority complete in report
+    # ========================================
+    Write-Log "STAGE 8: Mark priority complete" "STAGE"
+
+    # Switch to main to update the priority report
+    $oldEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        git checkout main 2>&1 | Out-Null
+        $gitExitCode = $LASTEXITCODE
+        if ($hasRemote) {
+            git pull origin main 2>&1 | Out-Null
+        }
+    } finally {
+        $ErrorActionPreference = $oldEap
+    }
+
+    if ($gitExitCode -ne 0) {
+        Write-Log "Could not switch to main to mark priority complete" "WARN"
+    } else {
+        $reportPath = $latestReport.FullName
+        if (Test-Path $reportPath) {
+            $reportContent = Get-Content $reportPath -Raw
+            $prNumber = ""
+
+            # Extract PR number from gh output if available
+            if ($ghOutput -match '#(\d+)') {
+                $prNumber = $Matches[1]
+            } elseif ($ghOutput -match '/pull/(\d+)') {
+                $prNumber = $Matches[1]
+            }
+
+            # Build completion line
+            $completionNote = "Merged via PR #$prNumber. Branch: ``$branchName``."
+            if (-not $prNumber) {
+                $completionNote = "Branch: ``$branchName``."
+            }
+
+            # Find the priority heading and replace it + its body with completion marker
+            # Match: ## Priority N [ID]: Title\n\n<body until next --- or ## or EOF>
+            $escapedItem = [regex]::Escape($analysis.priority_item)
+            # Match the heading line containing the priority item text
+            $pattern = "(?ms)(## )(Priority \d+ \[[^\]]+\]: [^\r\n]*$escapedItem[^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
+            if ($reportContent -match $pattern) {
+                $fullMatch = $Matches[0]
+                $headingPrefix = $Matches[1]
+                $headingText = $Matches[2]
+                $replacement = "${headingPrefix}~~${headingText}~~ COMPLETE`n`n${completionNote}"
+                $newContent = $reportContent.Replace($fullMatch, $replacement)
+                $newContent | Set-Content $reportPath -NoNewline
+
+                # Commit and push
+                $oldEap = $ErrorActionPreference
+                try {
+                    $ErrorActionPreference = "Continue"
+                    git add $reportPath 2>&1 | Out-Null
+                    git commit -m "Mark $($analysis.priority_item) complete" 2>&1 | Out-Null
+                    if ($hasRemote) {
+                        git push origin main 2>&1 | Out-Null
+                        $pushCode = $LASTEXITCODE
+                    }
+                } finally {
+                    $ErrorActionPreference = $oldEap
+                }
+
+                if ($hasRemote -and $pushCode -eq 0) {
+                    Write-Log "Priority marked complete in report and pushed to main" "SUCCESS"
+                } elseif ($hasRemote) {
+                    Write-Log "Priority marked complete locally but push failed" "WARN"
+                } else {
+                    Write-Log "Priority marked complete in report" "SUCCESS"
+                }
+            } else {
+                Write-Log "Could not find priority heading to mark complete (may already be marked)" "WARN"
+            }
+        } else {
+            Write-Log "Report file not found at $reportPath" "WARN"
+        }
+    }
+
     Write-Log "=== Auto-Compound Complete ===" "SUCCESS"
 
     # Output summary
