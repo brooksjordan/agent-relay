@@ -435,7 +435,7 @@ $($analysis.description)
 
         Remove-Item $prBodyFile -ErrorAction SilentlyContinue
     } elseif ($hasRemote -and -not $pushSucceeded) {
-        Write-Log "Skipping PR creation — push failed" "WARN"
+        Write-Log "Skipping PR creation - push failed" "WARN"
     } else {
         Write-Log "No remote configured, skipping PR creation" "WARN"
         Write-Log "Changes committed to branch: $branchName" "SUCCESS"
