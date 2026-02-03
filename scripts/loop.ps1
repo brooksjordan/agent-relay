@@ -244,7 +244,7 @@ function Invoke-ClaudeWithTimeout {
     # Write wrapper script that:
     # 1. Sets window title for easy identification
     # 2. Runs Claude with prompt piped in
-    # 3. Uses Start-Transcript to capture output (allows true streaming - Claude sees real TTY)
+    # 3. Uses ForEach-Object to stream output line-by-line to console AND file
     # 4. Saves exit code
     $wrapperContent = @"
 `$Host.UI.RawUI.WindowTitle = "Claude Task - PID `$PID"
@@ -258,19 +258,18 @@ Write-Host "=============================`n" -ForegroundColor Cyan
 
 Set-Location "$WorkingDir"
 
-# Run Claude with TRUE STREAMING using Start-Transcript
-# This avoids pipe buffering - Claude sees a real TTY and streams naturally
-Start-Transcript -Path "$outputFile" -Force | Out-Null
-
+# Run Claude with streaming via ForEach-Object
+# Processes each line immediately: write to console + append to file
 try {
-    Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions
+    Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions 2>&1 | ForEach-Object {
+        [Console]::WriteLine(`$_)
+        `$_ | Add-Content -Path "$outputFile" -Encoding UTF8
+    }
     `$LASTEXITCODE | Out-File "$exitCodeFile" -Encoding UTF8
 } catch {
     Write-Host "`nERROR: `$_" -ForegroundColor Red
     "1" | Out-File "$exitCodeFile" -Encoding UTF8
 }
-
-Stop-Transcript | Out-Null
 
 Write-Host "`n=== Claude Task Finished ===" -ForegroundColor Cyan
 # Window closes automatically - no blocking for overnight runs
