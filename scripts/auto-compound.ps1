@@ -173,10 +173,32 @@ try {
 
     Write-Log "Latest report: $($latestReport.Name)"
 
-    # Analyze to get #1 priority
-    Write-Log "Analyzing report for #1 priority..."
+    # Check for already-merged feature branches to skip completed priorities
+    $mergedBranches = @()
+    try {
+        git fetch --prune origin 2>&1 | Out-Null
+        $mergedRaw = git branch -r --merged origin/main 2>$null
+        if ($mergedRaw) {
+            $mergedBranches = $mergedRaw |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ -match '^origin/(feature/|fix/|refactor/)' } |
+                ForEach-Object { $_ -replace '^origin/', '' }
+        }
+        if ($mergedBranches.Count -gt 0) {
+            Write-Log "Found $($mergedBranches.Count) merged feature branch(es): $($mergedBranches -join ', ')"
+        }
+    } catch {
+        Write-Log "Could not check merged branches, proceeding without skip list" "WARN"
+    }
 
-    $analysisJson = & $AnalyzeScript -ReportPath $latestReport.FullName
+    # Analyze to get next priority (skipping completed ones)
+    Write-Log "Analyzing report for next priority..."
+
+    $analyzeArgs = @{ ReportPath = $latestReport.FullName }
+    if ($mergedBranches.Count -gt 0) {
+        $analyzeArgs.CompletedBranches = $mergedBranches
+    }
+    $analysisJson = & $AnalyzeScript @analyzeArgs
     $analysis = $analysisJson | ConvertFrom-Json
 
     Write-Log "Priority item: $($analysis.priority_item)"

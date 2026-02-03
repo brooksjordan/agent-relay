@@ -883,6 +883,53 @@ Before starting a new auto-compound run:
 
 ---
 
+## 2026-02-02 — Update Priority Report Between Runs
+
+### Problem: Pipeline re-runs completed priority
+
+After merging PR #1 (Python Calculation Engine) for the Throughline project, relaunching auto-compound picked up Priority 1 again instead of Priority 2. The pipeline always extracts the "#1 priority" from the report, but the report doesn't update itself when work is merged.
+
+### Root Cause
+
+The priority report is a static file. The pipeline reads it, finds "Priority 1", and starts building — even if that priority was already shipped. There's no feedback loop between merged PRs and the priority report.
+
+### Current Workaround (Manual Step)
+
+After merging a PR, update the priority report before relaunching:
+1. Mark the completed priority as done (e.g., `~~Priority 1~~ ✓ COMPLETE`)
+2. Renumber remaining priorities so the next one is #1
+3. Commit and push the updated report
+4. Then relaunch auto-compound
+
+### Fix Implemented
+
+The pipeline now auto-detects completed priorities:
+
+1. **`auto-compound.ps1`** checks `git branch -r --merged origin/main` for merged feature branches
+2. Passes merged branch names to `analyze-report.ps1` via `-CompletedBranches` parameter
+3. **`analyze-report.ps1`** includes the completed list in the Claude prompt, instructing it to skip those priorities
+4. The prompt also tells Claude to skip priorities marked with strikethrough, checkmarks, "COMPLETE", or "DONE"
+
+### Fix v2: Deterministic Pre-Filter (GPT 5.2 Codex recommendation)
+
+The v1 fix (passing completed branches to the LLM prompt) didn't work — Claude still picked "Priority 1" regardless of skip instructions. **Codex's diagnosis: stop asking the LLM to decide what's next. Make selection deterministic.**
+
+The new approach in `analyze-report.ps1`:
+1. **Deterministic pre-filter**: Split report into `##` sections, strip any section whose header contains `~~`, `COMPLETE`, `DONE`, `✓`, or `✅`
+2. **Merged branch matching**: Also strip sections whose content matches a merged branch slug (e.g., `python-calculation-engine` matches `feature/python-calculation-engine`)
+3. **Feed only remaining sections to Claude**: Claude's job is now extraction only ("pick the FIRST item"), not selection
+4. **Added `git fetch --prune`** before branch detection to ensure merged branches are current
+
+**Principle**: Let code decide *which* priority; let LLM extract *details*. Deterministic decisions should never be delegated to an LLM.
+
+### Key Takeaway
+
+**The priority report is the pipeline's instruction set — keep it current.** The pipeline now auto-strips completed sections before Claude sees them. Marking completed priorities in the report is still good practice for clarity.
+
+*Discovered 2026-02-02 during Throughline MVP build. v1 fix failed. v2 (deterministic) implemented same day per GPT 5.2 Codex recommendation.*
+
+---
+
 ## 2026-02-01 — Preflight Safeguards: Block Run if Priority File Would Be Deleted
 
 ### Problem: New priority file wiped before pipeline could read it
