@@ -243,10 +243,10 @@ function Invoke-ClaudeWithTimeout {
 
     # Write wrapper script that:
     # 1. Sets window title for easy identification
-    # 2. Runs Claude via winpty (PTY) so Ink can use raw mode while we pipe stdin
-    # 3. Uses ForEach-Object to stream output line-by-line to console AND file
+    # 2. Runs Claude with prompt piped in
+    # 3. Tees output to file AND console (output is buffered until task completes)
     # 4. Saves exit code
-    $winptyPath = "C:\Program Files\Git\usr\bin\winpty.exe"
+    # NOTE: Streaming attempts failed (Ink raw mode issues). Buffered output works reliably.
     $wrapperContent = @"
 `$Host.UI.RawUI.WindowTitle = "Claude Task - PID `$PID"
 `$ErrorActionPreference = "Continue"
@@ -259,16 +259,13 @@ Write-Host "=============================`n" -ForegroundColor Cyan
 
 Set-Location "$WorkingDir"
 
-# Run Claude through winpty (pseudo-terminal) for streaming + raw mode support
-# winpty creates a PTY so Ink can enable raw mode even though we pipe stdin
+# Run Claude with Tee-Object (output buffered until completion, but reliable)
 try {
-    Get-Content "$promptFile" -Raw | & "$winptyPath" "$claudePath" --dangerously-skip-permissions 2>&1 | ForEach-Object {
-        [Console]::WriteLine(`$_)
-        `$_ | Add-Content -Path "$outputFile" -Encoding UTF8
-    }
+    Get-Content "$promptFile" -Raw | & "$claudePath" --dangerously-skip-permissions 2>&1 | Tee-Object -FilePath "$outputFile"
     `$LASTEXITCODE | Out-File "$exitCodeFile" -Encoding UTF8
 } catch {
     Write-Host "`nERROR: `$_" -ForegroundColor Red
+    `$_.ToString() | Out-File "$outputFile"
     "1" | Out-File "$exitCodeFile" -Encoding UTF8
 }
 
