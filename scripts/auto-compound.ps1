@@ -72,6 +72,24 @@ try {
     Write-Log "STAGE 0: Preflight checks" "STAGE"
 
     $reportsFullDir = Join-Path $ProjectPath $ReportsDir
+    $completedDir = Join-Path $ProjectPath ".shipasleep" "completed"
+
+    # Check for untracked completion records that git clean -fd would wipe
+    if (Test-Path $completedDir) {
+        $untrackedCompletion = git ls-files --others --exclude-standard -- "$completedDir/*.json" 2>$null
+        if ($untrackedCompletion) {
+            Write-Log "PREFLIGHT FAILED: Untracked completion records detected!" "ERROR"
+            Write-Log "Files: $untrackedCompletion" "ERROR"
+            Write-Log "" "ERROR"
+            Write-Log "The git reset/clean in Stage 1 would DELETE these files." "ERROR"
+            Write-Log "Commit them first:" "ERROR"
+            Write-Log "  git add $completedDir" "ERROR"
+            Write-Log "  git commit -m 'Add completion records'" "ERROR"
+            Write-Log "" "ERROR"
+            Write-Log "Then re-run auto-compound." "ERROR"
+            exit 1
+        }
+    }
 
     # Check for untracked priority files that would be wiped by git clean
     $untrackedPriority = git ls-files --others --exclude-standard -- "$reportsFullDir/priority-*.md" 2>$null
@@ -173,39 +191,32 @@ try {
 
     Write-Log "Latest report: $($latestReport.Name)"
 
-    # Check for already-merged feature branches to skip completed priorities
-    $mergedBranches = @()
-    try {
-        git fetch --prune origin 2>&1 | Out-Null
-        $mergedRaw = git branch -r --merged origin/main 2>$null
-        if ($mergedRaw) {
-            $mergedBranches = $mergedRaw |
-                ForEach-Object { $_.Trim() } |
-                Where-Object { $_ -match '^origin/(feature/|fix/|refactor/)' } |
-                ForEach-Object { $_ -replace '^origin/', '' }
-        }
-        if ($mergedBranches.Count -gt 0) {
-            Write-Log "Found $($mergedBranches.Count) merged feature branch(es): $($mergedBranches -join ', ')"
-        }
-    } catch {
-        Write-Log "Could not check merged branches, proceeding without skip list" "WARN"
+    # Check completion directory for already-finished priorities
+    if (Test-Path $completedDir) {
+        $completionCount = (Get-ChildItem -Path $completedDir -Filter "*.json" -ErrorAction SilentlyContinue).Count
+        Write-Log "Found $completionCount completion record(s) in $completedDir"
+    } else {
+        Write-Log "No completion directory found at $completedDir — first run for this project" "WARN"
     }
 
     # Analyze to get next priority (skipping completed ones)
     Write-Log "Analyzing report for next priority..."
 
     $analyzeArgs = @{ ReportPath = $latestReport.FullName }
-    if ($mergedBranches.Count -gt 0) {
-        $analyzeArgs.CompletedBranches = $mergedBranches
+    if (Test-Path $completedDir) {
+        $analyzeArgs.CompletedDir = $completedDir
     }
     $analysisJson = & $AnalyzeScript @analyzeArgs
     $analysis = $analysisJson | ConvertFrom-Json
 
+    $priorityId = if ($analysis.priority_id) { $analysis.priority_id } else { "" }
     Write-Log "Priority item: $($analysis.priority_item)"
+    Write-Log "Priority ID: $priorityId"
     Write-Log "Branch: $($analysis.branch_name)"
 
     if ($DryRun) {
         Write-Log "DRY RUN - Would create branch and implement: $($analysis.priority_item)" "WARN"
+        Write-Log "Priority ID: $priorityId"
         Write-Log "Analysis: $analysisJson"
         exit 0
     }
@@ -404,6 +415,42 @@ Write the JSON file now.
     Write-Log "Loop complete: $($loopResult.completed) completed, $($loopResult.failed) failed, $($loopResult.pending) pending"
 
     # ========================================
+    # STAGE 6.5: Write completion record
+    # ========================================
+    if ($priorityId) {
+        Write-Log "STAGE 6.5: Write completion record" "STAGE"
+
+        $completedDirLocal = Join-Path $ProjectPath ".shipasleep" "completed"
+        if (-not (Test-Path $completedDirLocal)) {
+            New-Item -ItemType Directory -Force -Path $completedDirLocal | Out-Null
+        }
+
+        $completionRecord = @{
+            priority_id = $priorityId
+            priority_item = $analysis.priority_item
+            branch_name = $branchName
+            completed_at = (Get-Date).ToString("o")
+            pr_number = $null
+            source_report = $latestReport.Name
+            tasks_completed = $loopResult.completed
+            tasks_failed = $loopResult.failed
+        }
+
+        $completionFile = Join-Path $completedDirLocal "$priorityId.json"
+        $completionRecord | ConvertTo-Json -Depth 3 | Out-File $completionFile -Encoding UTF8
+        Write-Log "Completion record written: $completionFile"
+
+        # Stage and commit the completion record so it travels with the feature branch
+        $ErrorActionPreference = "Continue"
+        git add $completionFile 2>&1 | Out-Null
+        git commit -m "Add completion record for $priorityId" 2>&1 | Out-Null
+        $ErrorActionPreference = "Stop"
+        Write-Log "Completion record committed to branch"
+    } else {
+        Write-Log "STAGE 6.5: Skipped — no priority_id available" "WARN"
+    }
+
+    # ========================================
     # STAGE 7: Create PR
     # ========================================
     Write-Log "STAGE 7: Create PR" "STAGE"
@@ -427,6 +474,7 @@ Write the JSON file now.
     }
 
     # Build PR body
+    $priorityIdLine = if ($priorityId) { "- Priority ID: ``$priorityId``" } else { "" }
     $prBody = @"
 ## Summary
 
@@ -443,6 +491,7 @@ $($analysis.description)
 
 ## Source
 
+$priorityIdLine
 - Priority report: ``$($latestReport.Name)``
 - PRD: ``$prdFilename``
 - Tasks: ``$tasksFilename``
@@ -492,6 +541,7 @@ $($analysis.description)
 
     # Output summary
     $summary = @{
+        priority_id = $priorityId
         priority_item = $analysis.priority_item
         branch = $branchName
         tasks_completed = $loopResult.completed

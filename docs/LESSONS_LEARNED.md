@@ -995,3 +995,58 @@ Additional recommendations for future:
 *Diagnosed by GPT 5.2 Pro, implemented 2026-02-01.*
 
 ---
+
+## 2026-02-03 — File-Based Completion Records (v3 Priority Detection)
+
+### Problem: Pipeline re-runs completed priorities (hit 4 times)
+
+Even after implementing deterministic pre-filtering (v2), the pipeline still re-ran completed priorities. Two failure modes:
+
+1. **Squash merges delete branch history.** The v2 approach used `git branch -r --merged origin/main` to find merged feature branches and match them against report sections by slug. When PRs are squash-merged, the original feature branch commit history is gone — `--merged` can't find them.
+
+2. **Humans forget to update report markup.** The strikethrough/COMPLETE markers in the report are manual. If you merge a PR but forget to update the report before relaunching, the pipeline rebuilds the same priority.
+
+### What failed
+
+**v1 — LLM selection:** Passed completed branch names in the Claude prompt and asked it to skip them. Claude ignored the skip list and picked Priority 1 anyway. Fundamental mistake: delegating a deterministic decision to an LLM.
+
+**v2 — Deterministic pre-filter with branch slugs:** Code strips sections matching merged branches before Claude sees them. Works for regular merges but breaks on squash merges (no branch ancestry). Also requires the report body to contain text matching the branch slug, which is fragile.
+
+### Solution: v3 — File-based completion records
+
+A `.shipasleep/completed/` directory in the project repo stores one JSON file per completed priority. The filename IS the priority ID (e.g., `P04-CLI-DEMO.json`).
+
+**How it works:**
+
+1. Priority report headers contain stable IDs: `## Priority 4 [P04-CLI-DEMO]: CLI Interface`
+2. `analyze-report.ps1` loads filenames from `.shipasleep/completed/`, builds an ID set
+3. When filtering sections, check ID against the completion set FIRST (before strikethrough/slug checks)
+4. After execution, `auto-compound.ps1` Stage 6.5 writes a completion record and commits it to the feature branch
+5. When the PR merges (regular or squash), the completion file lands on main
+
+**Why this works regardless of merge strategy:**
+
+- Completion records are regular files committed to the repo
+- They survive squash merges because they're part of the diff, not branch metadata
+- They survive human forgetfulness because the pipeline writes them automatically
+- Detection is a directory listing + filename match — fully deterministic, no LLM involved
+
+### Changes made
+
+| File | Change |
+|------|--------|
+| `reports/priority-*.md` | Added `[ID]` tags to headers |
+| `.shipasleep/completed/*.json` | Seed files for P01-P03 (already merged) |
+| `analyze-report.ps1` | New `-CompletedDir` param, ID-based filtering as first check |
+| `auto-compound.ps1` Stage 0 | Preflight check for untracked completion files |
+| `auto-compound.ps1` Stage 2 | Replaced branch detection with completion dir check |
+| `auto-compound.ps1` Stage 6.5 | New stage: write + commit completion record |
+| `auto-compound.ps1` Stage 7 | Added `priority_id` to PR body and summary |
+
+### Key takeaway
+
+**Use files in the repo for state, not git metadata.** Branch names, merge ancestry, and commit messages are fragile signals that vary by merge strategy. A committed JSON file is a durable, deterministic record that survives any workflow.
+
+*Designed by GPT 5.2 Pro, implemented 2026-02-03.*
+
+---

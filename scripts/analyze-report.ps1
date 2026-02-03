@@ -2,12 +2,15 @@
 # Analyzes a priority report and extracts the next priority item to work on.
 # Deterministically strips completed priorities BEFORE sending to Claude.
 #
-# Usage: .\analyze-report.ps1 -ReportPath "reports/priority-2026-01-30.md"
-# Output: JSON with priority_item, branch_name, description
+# Usage: .\analyze-report.ps1 -ReportPath "reports/priority-2026-01-30.md" -CompletedDir ".shipasleep/completed"
+# Output: JSON with priority_id, priority_item, branch_name, description
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$ReportPath,
+
+    [Parameter(Mandatory=$false)]
+    [string]$CompletedDir = "",
 
     [Parameter(Mandatory=$false)]
     [string[]]$CompletedBranches = @()
@@ -23,8 +26,31 @@ if (-not (Test-Path $ReportPath)) {
 $reportContent = Get-Content $ReportPath -Raw
 
 # ============================================================
+# LOAD COMPLETION RECORDS: File-based completion directory
+# ============================================================
+
+$completedIds = @{}
+
+if ($CompletedDir -and (Test-Path $CompletedDir)) {
+    $completionFiles = Get-ChildItem -Path $CompletedDir -Filter "*.json" -ErrorAction SilentlyContinue
+    foreach ($file in $completionFiles) {
+        # Filename without extension IS the priority ID
+        $id = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+        $completedIds[$id] = $true
+    }
+    if ($completedIds.Count -gt 0) {
+        Write-Host "Loaded $($completedIds.Count) completion record(s): $($completedIds.Keys -join ', ')"
+    }
+}
+
+# ============================================================
 # DETERMINISTIC PRE-FILTER: Strip completed priorities before
 # sending to Claude. This ensures Claude only sees what's left.
+#
+# Priority order for completion detection:
+#   1. Completion directory (ID match) — most reliable
+#   2. Strikethrough/COMPLETE markers in header — manual markup
+#   3. Legacy branch slug matching — backward compat
 # ============================================================
 
 # Split report into sections by ## headers
@@ -59,24 +85,31 @@ if ($currentHeader -or $currentSection.Count -gt 0) {
 $filteredSections = @()
 foreach ($section in $sections) {
     $header = $section.Header
-
-    # Skip if header contains completion markers
     $isComplete = $false
 
-    # Check for strikethrough (~~...~~)
-    if ($header -match '~~.*~~') { $isComplete = $true }
-
-    # Check for checkmarks or COMPLETE/DONE markers
-    if ($header -match '(COMPLETE|DONE|✓|✅)') { $isComplete = $true }
-
-    # Check if this section's content matches a merged branch
-    $sectionText = ($section.Lines -join "`n")
-    foreach ($branch in $CompletedBranches) {
-        # Extract the descriptive part of the branch name (e.g., "python-calculation-engine" from "feature/python-calculation-engine")
-        $branchSlug = ($branch -replace '^(feature|fix|refactor)/', '') -replace '-', '[ -]'
-        if ($sectionText -match $branchSlug) {
+    # --- Check 1: Completion directory (ID in header) ---
+    if ($header -match '\[([A-Z0-9]+-[A-Z0-9-]+)\]') {
+        $sectionId = $Matches[1]
+        if ($completedIds.ContainsKey($sectionId)) {
             $isComplete = $true
-            break
+        }
+    }
+
+    # --- Check 2: Strikethrough / COMPLETE markers ---
+    if (-not $isComplete) {
+        if ($header -match '~~.*~~') { $isComplete = $true }
+        if ($header -match '(COMPLETE|DONE|✓|✅)') { $isComplete = $true }
+    }
+
+    # --- Check 3: Legacy branch slug matching ---
+    if (-not $isComplete) {
+        $sectionText = ($section.Lines -join "`n")
+        foreach ($branch in $CompletedBranches) {
+            $branchSlug = ($branch -replace '^(feature|fix|refactor)/', '') -replace '-', '[ -]'
+            if ($sectionText -match $branchSlug) {
+                $isComplete = $true
+                break
+            }
         }
     }
 
@@ -91,6 +124,13 @@ $filteredContent = ($filteredSections | ForEach-Object { ($_.Lines -join "`n") }
 if ([string]::IsNullOrWhiteSpace($filteredContent) -or $filteredContent.Trim().Length -lt 20) {
     Write-Error "All priorities appear to be complete. No remaining work found."
     exit 1
+}
+
+# Extract the priority ID from the FIRST uncompleted section header (if present)
+$firstUncompleted = $filteredSections | Select-Object -First 1
+$extractedPriorityId = ""
+if ($firstUncompleted.Header -match '\[([A-Z0-9]+-[A-Z0-9-]+)\]') {
+    $extractedPriorityId = $Matches[1]
 }
 
 # ============================================================
@@ -142,6 +182,7 @@ if ($resultText -match '(?s)<json_output>(?<content>.*?)</json_output>') {
 
         # Create output with defaults for any missing fields
         $output = @{
+            priority_id = if ($extractedPriorityId) { $extractedPriorityId } else { "" }
             priority_item = if ($parsed.priority_item) { $parsed.priority_item } else { "Unknown priority" }
             description = if ($parsed.description) { $parsed.description } else { $parsed.priority_item }
             branch_name = if ($parsed.branch_name) { $parsed.branch_name } else { "feature/auto-compound-$(Get-Date -Format 'yyyyMMdd')" }
@@ -162,6 +203,7 @@ if ($resultText -match '(?s)<json_output>(?<content>.*?)</json_output>') {
         try {
             $parsed = $jsonString | ConvertFrom-Json
             $output = @{
+                priority_id = if ($extractedPriorityId) { $extractedPriorityId } else { "" }
                 priority_item = if ($parsed.priority_item) { $parsed.priority_item } else { "Unknown priority" }
                 description = if ($parsed.description) { $parsed.description } else { $parsed.priority_item }
                 branch_name = if ($parsed.branch_name) { $parsed.branch_name } else { "feature/auto-compound-$(Get-Date -Format 'yyyyMMdd')" }
