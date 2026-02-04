@@ -1,12 +1,13 @@
 # auto-compound.ps1
 # Job 2: Full pipeline from priority report to PR
 #
-# Usage: .\auto-compound.ps1 [-ProjectPath "."] [-MaxIterations 25] [-DryRun] [-Verbose]
+# Usage: Launched via launch-auto-compound.ps1 (the ONLY correct way)
+#   .\launch-auto-compound.ps1 -ProjectPath "C:\agent_roi" -Verbose
 #
 # This is Job 2 of the "Ship While You Sleep" loop.
 # Run at 11:00 PM, after compound-review.
 #
-# Pipeline: report → PRD → tasks → implementation → PR
+# Pipeline: preflight -> git reset -> report -> PRD -> tasks -> implementation -> PR -> mark complete
 
 [CmdletBinding()]
 param(
@@ -14,8 +15,11 @@ param(
     [string]$ProjectName = "",
     [string]$ReportsDir = "reports",
     [string]$TasksDir = "tasks",
+    [string]$ReportFile = "PRIORITIES.md",
     [int]$MaxIterations = 25,
     [switch]$DryRun,
+    [switch]$ForceReset,
+    [switch]$AllowInline,
     # Quality gate commands (e.g., "npm run typecheck", "npm test")
     [string[]]$QualityChecks = @()
 )
@@ -55,6 +59,22 @@ function Write-Log {
     }
 }
 
+function Invoke-Native {
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [Parameter(ValueFromRemainingArguments)][string[]]$Arguments
+    )
+    $old = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $out = & $Command @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $old
+    }
+    [pscustomobject]@{ ExitCode = $code; Output = ($out -join "`n") }
+}
+
 # --- Main Execution ---
 
 Write-Log "=== Auto-Compound Started ===" "STAGE"
@@ -67,74 +87,117 @@ Push-Location $ProjectPath
 
 try {
     # ========================================
-    # STAGE 1: Git setup - ensure clean state
+    # STAGE 0: Preflight (BEFORE destructive reset)
     # ========================================
-    Write-Log "STAGE 1: Git setup" "STAGE"
+    Write-Log "STAGE 0: Preflight" "STAGE"
 
-    # Temporarily allow errors for git commands
+    # 0a. Enforce visible-window launch
+    if (-not $env:SHIP_ASLEEP_VISIBLE_LAUNCH -and -not $AllowInline) {
+        Write-Log "Pipeline must be launched via launch-auto-compound.ps1 (not inline)." "ERROR"
+        Write-Log "Run: C:\ship_asleep\scripts\launch-auto-compound.ps1 -ProjectPath `"$ProjectPath`" -Verbose" "ERROR"
+        Write-Log "Or use -AllowInline to override (not recommended)." "ERROR"
+        exit 2
+    }
+
+    # 0b. Must be a git repo
+    if (-not (Test-Path (Join-Path $ProjectPath ".git"))) {
+        Write-Log "Not a git repository: $ProjectPath" "ERROR"
+        exit 1
+    }
+
+    # 0c. Check for uncommitted work (Stage 1 will destroy it)
+    $status = Invoke-Native git status --porcelain
+    if ($status.ExitCode -ne 0) {
+        Write-Log "git status failed: $($status.Output)" "ERROR"
+        exit 1
+    }
+    if (-not $ForceReset -and -not [string]::IsNullOrWhiteSpace($status.Output)) {
+        Write-Log "Working tree is not clean. Aborting BEFORE destructive reset." "ERROR"
+        Write-Log "Uncommitted changes would be destroyed by Stage 1." "ERROR"
+        Write-Log "Fix: commit and push changes, or use -ForceReset to accept data loss." "ERROR"
+        Write-Log "Dirty files:`n$($status.Output)" "WARN"
+        exit 1
+    }
+
+    # 0d. Fetch from origin (non-destructive)
+    $defaultBranch = "main"
+    $fetch = Invoke-Native git fetch origin main
+    if ($fetch.ExitCode -ne 0) {
+        $fetch2 = Invoke-Native git fetch origin master
+        if ($fetch2.ExitCode -ne 0) {
+            Write-Log "Failed to fetch origin/main or origin/master" "ERROR"
+            exit 1
+        }
+        $defaultBranch = "master"
+    }
+    Write-Log "Fetched origin/$defaultBranch"
+
+    # 0e. Verify report exists on remote (before we reset and potentially lose local-only files)
+    $gitReportPath = ($ReportsDir.TrimEnd('\','/') + "/" + $ReportFile)
+    $show = Invoke-Native git show "origin/${defaultBranch}:${gitReportPath}"
+    if ($show.ExitCode -ne 0) {
+        Write-Log "Report not found on origin/$defaultBranch at: $gitReportPath" "ERROR"
+        Write-Log "The report must be committed and pushed before launching the pipeline." "ERROR"
+        Write-Log "Fix: git add $gitReportPath && git commit -m 'Add priority report' && git push" "ERROR"
+        exit 1
+    }
+
+    # 0f. Check for open priorities (before destructive reset)
+    $tmpReport = New-TemporaryFile
+    Set-Content -Path $tmpReport -Value $show.Output -Encoding UTF8
+
+    Write-Log "Checking origin/$defaultBranch:$gitReportPath for open priorities..."
+    $preflight = & $AnalyzeScript -ReportPath $tmpReport
+    $preflightAnalysis = $preflight | ConvertFrom-Json
+    Remove-Item $tmpReport -ErrorAction SilentlyContinue
+
+    if ([string]::IsNullOrWhiteSpace($preflightAnalysis.priority_item)) {
+        Write-Log "All priorities are complete in $ReportFile. Nothing to build." "SUCCESS"
+        Write-Log "To add new work: edit $gitReportPath, commit, and push." "INFO"
+        exit 0
+    }
+
+    Write-Log "Next priority: $($preflightAnalysis.priority_item)" "SUCCESS"
+    Write-Log "Preflight passed. Proceeding to build." "SUCCESS"
+
+    # ========================================
+    # STAGE 1: Git setup - destructive reset
+    # ========================================
+    Write-Log "STAGE 1: Git setup (destructive reset)" "STAGE"
+
     $ErrorActionPreference = "Continue"
 
-    # CRITICAL: Always reset to clean state first to prevent dirty state contamination
-    # This handles cases where a previous run failed mid-file-modification
-    Write-Log "Ensuring clean workspace state..."
+    Write-Log "Resetting to origin/$defaultBranch..."
     git reset --hard HEAD 2>&1 | Out-Null
     git clean -fd 2>&1 | Out-Null
-    Write-Log "Workspace reset to clean state"
-
-    # Only fetch/reset if remote exists
-    $hasRemote = git remote 2>$null
-    if ($hasRemote) {
-        git fetch origin main 2>&1 | Out-Null
-        git reset --hard origin/main 2>&1 | Out-Null
-
-        if ($LASTEXITCODE -ne 0) {
-            # Try master if main doesn't exist
-            git fetch origin master 2>&1 | Out-Null
-            git reset --hard origin/master 2>&1 | Out-Null
-        }
-        Write-Log "Reset to latest main/master"
-    } else {
-        Write-Log "No remote configured, using local state" "WARN"
-        # Ensure we're on main/master
-        $branch = git rev-parse --abbrev-ref HEAD 2>$null
-        if ($branch -ne "main" -and $branch -ne "master") {
-            git checkout main 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                git checkout master 2>&1 | Out-Null
-            }
-        }
-    }
+    git reset --hard "origin/$defaultBranch" 2>&1 | Out-Null
+    Write-Log "Reset to origin/$defaultBranch"
 
     $ErrorActionPreference = "Stop"
 
     # ========================================
-    # STAGE 2: Find and analyze priority report
+    # STAGE 2: Load priority report (deterministic)
     # ========================================
-    Write-Log "STAGE 2: Find priority report" "STAGE"
+    Write-Log "STAGE 2: Load priority report" "STAGE"
 
     $reportsFullDir = Join-Path $ProjectPath $ReportsDir
-    if (-not (Test-Path $reportsFullDir)) {
-        Write-Log "Reports directory not found: $reportsFullDir" "ERROR"
-        Write-Log "Create a priority report in $ReportsDir/ to get started."
+    $activeReport = Join-Path $reportsFullDir $ReportFile
+
+    if (-not (Test-Path $activeReport)) {
+        Write-Log "Report missing after reset: $activeReport" "ERROR"
         exit 1
     }
 
-    $latestReport = Get-ChildItem -Path $reportsFullDir -Filter "*.md" |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-
-    if (-not $latestReport) {
-        Write-Log "No priority reports found in $reportsFullDir" "ERROR"
-        exit 1
-    }
-
-    Write-Log "Latest report: $($latestReport.Name)"
-
-    # Analyze to get #1 priority
+    Write-Log "Active report: $ReportFile"
     Write-Log "Analyzing report for #1 priority..."
 
-    $analysisJson = & $AnalyzeScript -ReportPath $latestReport.FullName
+    $analysisJson = & $AnalyzeScript -ReportPath $activeReport
     $analysis = $analysisJson | ConvertFrom-Json
+
+    if ([string]::IsNullOrWhiteSpace($analysis.priority_item)) {
+        Write-Log "All priorities complete in $ReportFile. Nothing to build." "SUCCESS"
+        exit 0
+    }
 
     Write-Log "Priority item: $($analysis.priority_item)"
     Write-Log "Branch: $($analysis.branch_name)"
@@ -343,27 +406,16 @@ Write the JSON file now.
     # ========================================
     Write-Log "STAGE 7: Create PR" "STAGE"
 
-    # Push branch (if remote exists)
-    # NOTE: Native commands (git, gh) write progress to stderr even on success.
-    # We must use ErrorActionPreference=Continue and check $LASTEXITCODE to avoid
-    # false termination. See LESSONS_LEARNED.md for details.
     $hasRemote = git remote 2>$null
     $pushSucceeded = $false
     if ($hasRemote) {
-        $oldEap = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $pushOutput = & git push -u origin $branchName 2>&1
-            $pushExitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $oldEap
-        }
+        $pushResult = Invoke-Native git push -u origin $branchName
 
-        if ($pushExitCode -eq 0) {
+        if ($pushResult.ExitCode -eq 0) {
             Write-Log "Branch pushed: $branchName"
             $pushSucceeded = $true
         } else {
-            Write-Log "Failed to push branch (exit $pushExitCode): $($pushOutput -join ' ')" "WARN"
+            Write-Log "Failed to push branch (exit $($pushResult.ExitCode)): $($pushResult.Output)" "WARN"
         }
     } else {
         Write-Log "No remote configured, skipping push" "WARN"
@@ -386,7 +438,7 @@ $($analysis.description)
 
 ## Source
 
-- Priority report: ``$($latestReport.Name)``
+- Priority report: ``$ReportFile``
 - PRD: ``$prdFilename``
 - Tasks: ``$tasksFilename``
 
@@ -396,6 +448,7 @@ $($analysis.description)
 "@
 
     # Create draft PR (if remote exists and push succeeded)
+    $ghOutput = ""
     if ($hasRemote -and $pushSucceeded) {
         $prTitle = "Compound: $($analysis.priority_item)"
 
@@ -403,34 +456,14 @@ $($analysis.description)
         $prBodyFile = Join-Path $env:TEMP "pr_body_$(Get-Date -Format 'yyyyMMdd_HHmmss').md"
         $prBody | Out-File $prBodyFile -Encoding UTF8
 
-        $oldEap = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $ghOutput = & gh pr create --draft --title $prTitle --body-file $prBodyFile --base main 2>&1
-            $ghExitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $oldEap
-        }
+        $prResult = Invoke-Native gh pr create --draft --title $prTitle --body-file $prBodyFile --base $defaultBranch
 
-        if ($ghExitCode -eq 0) {
+        if ($prResult.ExitCode -eq 0) {
+            $ghOutput = $prResult.Output
             Write-Log "PR created: $ghOutput" "SUCCESS"
         } else {
-            # Try with master
-            $oldEap = $ErrorActionPreference
-            try {
-                $ErrorActionPreference = "Continue"
-                $ghOutput = & gh pr create --draft --title $prTitle --body-file $prBodyFile --base master 2>&1
-                $ghExitCode = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $oldEap
-            }
-
-            if ($ghExitCode -eq 0) {
-                Write-Log "PR created: $ghOutput" "SUCCESS"
-            } else {
-                Write-Log "Failed to create PR (exit $ghExitCode): $($ghOutput -join ' ')" "WARN"
-                Write-Log "Branch pushed but PR creation failed. Create manually."
-            }
+            Write-Log "Failed to create PR (exit $($prResult.ExitCode)): $($prResult.Output)" "WARN"
+            Write-Log "Branch pushed but PR creation failed. Create manually."
         }
 
         Remove-Item $prBodyFile -ErrorAction SilentlyContinue
@@ -446,23 +479,16 @@ $($analysis.description)
     # ========================================
     Write-Log "STAGE 8: Mark priority complete" "STAGE"
 
-    # Switch to main to update the priority report
-    $oldEap = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        git checkout main 2>&1 | Out-Null
-        $gitExitCode = $LASTEXITCODE
-        if ($hasRemote) {
-            git pull origin main 2>&1 | Out-Null
-        }
-    } finally {
-        $ErrorActionPreference = $oldEap
+    # Switch to main/master to update the priority report
+    $checkoutResult = Invoke-Native git checkout $defaultBranch
+    if ($hasRemote) {
+        Invoke-Native git pull origin $defaultBranch | Out-Null
     }
 
-    if ($gitExitCode -ne 0) {
-        Write-Log "Could not switch to main to mark priority complete" "WARN"
+    if ($checkoutResult.ExitCode -ne 0) {
+        Write-Log "Could not switch to $defaultBranch to mark priority complete" "WARN"
     } else {
-        $reportPath = $latestReport.FullName
+        $reportPath = Join-Path $reportsFullDir $ReportFile
         if (Test-Path $reportPath) {
             $reportContent = Get-Content $reportPath -Raw
             $prNumber = ""
@@ -481,9 +507,7 @@ $($analysis.description)
             }
 
             # Find the priority heading and replace it + its body with completion marker
-            # Match: ## Priority N [ID]: Title\n\n<body until next --- or ## or EOF>
             $escapedItem = [regex]::Escape($analysis.priority_item)
-            # Match the heading line containing the priority item text
             $pattern = "(?ms)(## )(Priority \d+ \[[^\]]+\]: [^\r\n]*$escapedItem[^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
             if ($reportContent -match $pattern) {
                 $fullMatch = $Matches[0]
@@ -494,21 +518,14 @@ $($analysis.description)
                 $newContent | Set-Content $reportPath -NoNewline
 
                 # Commit and push
-                $oldEap = $ErrorActionPreference
-                try {
-                    $ErrorActionPreference = "Continue"
-                    git add $reportPath 2>&1 | Out-Null
-                    git commit -m "Mark $($analysis.priority_item) complete" 2>&1 | Out-Null
-                    if ($hasRemote) {
-                        git push origin main 2>&1 | Out-Null
-                        $pushCode = $LASTEXITCODE
-                    }
-                } finally {
-                    $ErrorActionPreference = $oldEap
+                $addResult = Invoke-Native git add $reportPath
+                $commitResult = Invoke-Native git commit -m "Mark $($analysis.priority_item) complete"
+                if ($hasRemote) {
+                    $pushMain = Invoke-Native git push origin $defaultBranch
                 }
 
-                if ($hasRemote -and $pushCode -eq 0) {
-                    Write-Log "Priority marked complete in report and pushed to main" "SUCCESS"
+                if ($hasRemote -and $pushMain.ExitCode -eq 0) {
+                    Write-Log "Priority marked complete in report and pushed to $defaultBranch" "SUCCESS"
                 } elseif ($hasRemote) {
                     Write-Log "Priority marked complete locally but push failed" "WARN"
                 } else {
@@ -532,7 +549,7 @@ $($analysis.description)
         tasks_failed = $loopResult.failed
         tasks_pending = $loopResult.pending
         iterations_used = $loopResult.iterations_used
-        pr_created = ($LASTEXITCODE -eq 0)
+        pr_created = ($pushSucceeded -and $ghOutput)
     }
 
     $summary | ConvertTo-Json
