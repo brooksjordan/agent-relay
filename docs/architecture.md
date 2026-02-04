@@ -183,4 +183,4 @@ This helper wraps `$ErrorActionPreference = "Continue"` + `$LASTEXITCODE` into a
 ---
 
 **Last updated:** 2026-02-03
-**Current stable version:** v2.0.1-stable (tag on commit `f5f0ad9`)
+**Current stable version:** v2.1.0-stable (tag on commit `3b1cb4f`)
