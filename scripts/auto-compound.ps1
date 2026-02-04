@@ -185,14 +185,12 @@ try {
     git reset --hard "origin/$defaultBranch" 2>&1 | Out-Null
     git clean -fd 2>&1 | Out-Null
     git clean -fdX 2>&1 | Out-Null
-    Write-Log "Reset to origin/$defaultBranch"
 
-    # Ensure logs/ exists for Write-Log after cleaning
+    # Recreate logs/ IMMEDIATELY after cleans, before any Write-Log call
     $logsDir = Join-Path $ProjectPath "logs"
-    if (-not (Test-Path $logsDir)) {
-        New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
-    }
-    Write-Log "Clean slate established"
+    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+
+    Write-Log "Reset to origin/$defaultBranch. Clean slate established."
 
     $ErrorActionPreference = "Stop"
 
