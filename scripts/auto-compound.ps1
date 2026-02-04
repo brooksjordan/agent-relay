@@ -105,17 +105,31 @@ try {
         exit 1
     }
 
-    # 0c. Check for uncommitted work (Stage 1 will destroy it)
-    $status = Invoke-Native git status --porcelain
-    if ($status.ExitCode -ne 0) {
-        Write-Log "git status failed: $($status.Output)" "ERROR"
+    # 0c. Auto-clean gitignored build artifacts, then check for real uncommitted work
+    #     git clean -fdX removes ONLY ignored files (uppercase X). Safe for build leftovers.
+    $ErrorActionPreference = "Continue"
+    git clean -fdX 2>&1 | Out-Null
+    $ErrorActionPreference = "Stop"
+
+    # Ensure logs/ exists for Write-Log after cleaning
+    $logsDir = Join-Path $ProjectPath "logs"
+    if (-not (Test-Path $logsDir)) {
+        New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+    }
+
+    # Now check for tracked changes (real user work)
+    $diffResult = Invoke-Native git diff --name-only
+    if (-not $ForceReset -and -not [string]::IsNullOrWhiteSpace($diffResult.Output)) {
+        Write-Log "Tracked file changes found. Aborting BEFORE destructive reset." "ERROR"
+        Write-Log "Changed files:`n$($diffResult.Output)" "WARN"
         exit 1
     }
-    if (-not $ForceReset -and -not [string]::IsNullOrWhiteSpace($status.Output)) {
-        Write-Log "Working tree is not clean. Aborting BEFORE destructive reset." "ERROR"
-        Write-Log "Uncommitted changes would be destroyed by Stage 1." "ERROR"
-        Write-Log "Fix: commit and push changes, or use -ForceReset to accept data loss." "ERROR"
-        Write-Log "Dirty files:`n$($status.Output)" "WARN"
+
+    # Check for untracked non-ignored files
+    $untrackedResult = Invoke-Native git ls-files --others --exclude-standard
+    if (-not $ForceReset -and -not [string]::IsNullOrWhiteSpace($untrackedResult.Output)) {
+        Write-Log "Untracked non-ignored files found. Aborting BEFORE destructive reset." "ERROR"
+        Write-Log "Untracked files:`n$($untrackedResult.Output)" "WARN"
         exit 1
     }
 
@@ -168,24 +182,17 @@ try {
     $ErrorActionPreference = "Continue"
 
     Write-Log "Resetting to origin/$defaultBranch..."
-    git reset --hard HEAD 2>&1 | Out-Null
-    git clean -fd 2>&1 | Out-Null
     git reset --hard "origin/$defaultBranch" 2>&1 | Out-Null
+    git clean -fd 2>&1 | Out-Null
+    git clean -fdX 2>&1 | Out-Null
     Write-Log "Reset to origin/$defaultBranch"
 
-    # Clean up prior build artifacts (gitignored, so git clean -fd skips them)
-    $tasksDir = Join-Path $ProjectPath "tasks"
-    if (Test-Path $tasksDir) {
-        Remove-Item -Path $tasksDir -Recurse -Force
-        Write-Log "Cleaned prior build artifacts from tasks/"
-    }
+    # Ensure logs/ exists for Write-Log after cleaning
     $logsDir = Join-Path $ProjectPath "logs"
-    if (Test-Path $logsDir) {
-        Remove-Item -Path $logsDir -Recurse -Force
+    if (-not (Test-Path $logsDir)) {
+        New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
     }
-    # Recreate logs/ so Write-Log can continue writing
-    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
-    Write-Log "Cleaned prior build artifacts"
+    Write-Log "Clean slate established"
 
     $ErrorActionPreference = "Stop"
 
@@ -520,10 +527,19 @@ $($analysis.description)
                 $completionNote = "Branch: ``$branchName``."
             }
 
-            # Find the priority heading and replace it + its body with completion marker
-            $escapedItem = [regex]::Escape($analysis.priority_item)
-            $pattern = "(?ms)(## )(Priority \d+ \[[^\]]+\]: [^\r\n]*$escapedItem[^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
-            if ($reportContent -match $pattern) {
+            # Extract priority ID from priority_item (e.g., "P08" from "P08 - Wider Monte Carlo")
+            $priorityId = ""
+            if ($analysis.priority_item -match '(P\d+)') {
+                $priorityId = $Matches[1]
+            }
+
+            if (-not $priorityId) {
+                Write-Log "Could not extract priority ID (e.g. P08) from: $($analysis.priority_item)" "WARN"
+            }
+
+            # Match heading by priority ID in brackets (e.g., ## Priority 8 [P08-WIDER-MC]: ...)
+            $pattern = "(?ms)(## )(Priority \d+ \[$priorityId[^\]]*\]: [^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
+            if ($priorityId -and $reportContent -match $pattern) {
                 $fullMatch = $Matches[0]
                 $headingPrefix = $Matches[1]
                 $headingText = $Matches[2]
