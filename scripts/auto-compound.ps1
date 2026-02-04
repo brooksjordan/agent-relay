@@ -182,8 +182,10 @@ try {
     $logsDir = Join-Path $ProjectPath "logs"
     if (Test-Path $logsDir) {
         Remove-Item -Path $logsDir -Recurse -Force
-        Write-Log "Cleaned prior logs from logs/"
     }
+    # Recreate logs/ so Write-Log can continue writing
+    New-Item -ItemType Directory -Path $logsDir -Force | Out-Null
+    Write-Log "Cleaned prior build artifacts"
 
     $ErrorActionPreference = "Stop"
 
