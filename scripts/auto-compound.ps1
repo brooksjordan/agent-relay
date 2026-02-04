@@ -173,6 +173,18 @@ try {
     git reset --hard "origin/$defaultBranch" 2>&1 | Out-Null
     Write-Log "Reset to origin/$defaultBranch"
 
+    # Clean up prior build artifacts (gitignored, so git clean -fd skips them)
+    $tasksDir = Join-Path $ProjectPath "tasks"
+    if (Test-Path $tasksDir) {
+        Remove-Item -Path $tasksDir -Recurse -Force
+        Write-Log "Cleaned prior build artifacts from tasks/"
+    }
+    $logsDir = Join-Path $ProjectPath "logs"
+    if (Test-Path $logsDir) {
+        Remove-Item -Path $logsDir -Recurse -Force
+        Write-Log "Cleaned prior logs from logs/"
+    }
+
     $ErrorActionPreference = "Stop"
 
     # ========================================
