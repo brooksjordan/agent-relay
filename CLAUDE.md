@@ -86,12 +86,24 @@ C:\ship_asleep\
 
 7. **One active report: PRIORITIES.md** — The pipeline reads exactly `reports/PRIORITIES.md`. No file selection logic. Old reports go to `reports/archive/`. Do not create multiple active reports.
 
+### Self-Healing Build Cleanup
+
+The pipeline automatically cleans up after itself between builds. `.gitignore` is the manifest of what's safe to auto-clean.
+
+**How it works:** Stage 0 runs `git clean -fdX` (uppercase X = remove only gitignored files) before checking tree cleanliness. This removes build leftovers from the prior run (tasks/, logs/, NUL, __pycache__/) without touching tracked files or non-ignored untracked files. Stage 1 runs it again after reset for a full clean slate.
+
+**Why this matters:** Every prior build leaves artifacts (PRDs, task JSONs, loop logs) that are gitignored. Without self-healing, these trigger Stage 0's dirty-tree check and block the next launch. The old approach was manual `Remove-Item` on specific directories, which required updating the script every time a new artifact type appeared.
+
+**The rule:** If a build artifact shouldn't block the next launch, add it to `.gitignore`. The self-healing cleanup handles the rest. Never manually delete directories in the pipeline script.
+
+**Sequencing constraint:** After `git clean -fdX`, `logs/` no longer exists. The `logs/` directory must be recreated immediately after the clean, before any `Write-Log` call. Both Stage 0 and Stage 1 follow this pattern: clean, recreate logs/, then log.
+
 ### Pipeline Stages
 
 | Stage | What | Destructive? |
 |-------|------|-------------|
-| 0 | **Preflight** — checks env var, clean tree, report exists on remote, has open priorities | No (runs before reset) |
-| 1 | Git reset to origin/main | YES — destroys uncommitted work |
+| 0 | **Preflight** — self-healing cleanup, check for real uncommitted work, report on remote, open priorities | No (safe cleanup only) |
+| 1 | Git reset to origin/main + full clean (untracked + ignored) | YES — destroys uncommitted work |
 | 2 | Load PRIORITIES.md, analyze for #1 priority | No |
 | 3 | Create feature branch | No |
 | 4 | Generate PRD from priority | No |
@@ -113,6 +125,8 @@ C:\ship_asleep\
 | 2026-02-03 | Added Stage 0 preflight | Prevents uncommitted reports from being destroyed by Stage 1 |
 | 2026-02-03 | Deterministic report path | Always reads PRIORITIES.md, no timestamp-based file selection |
 | 2026-02-03 | Launcher script | Enforces visible window + env var, prevents inline launches |
+| 2026-02-04 | Self-healing Stage 0 (`git clean -fdX`) | Auto-cleans gitignored build leftovers before checking tree; .gitignore is the manifest |
+| 2026-02-04 | Stage 8 heading match by priority ID | Matches `P08` in `[P08-WIDER-MC]` instead of full title text; fixes Claude summary mismatch |
 
 ## Development Conventions
 
