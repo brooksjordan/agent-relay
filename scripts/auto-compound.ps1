@@ -146,7 +146,7 @@ try {
     $tmpReport = New-TemporaryFile
     Set-Content -Path $tmpReport -Value $show.Output -Encoding UTF8
 
-    Write-Log "Checking origin/$defaultBranch:$gitReportPath for open priorities..."
+    Write-Log "Checking origin/${defaultBranch}:${gitReportPath} for open priorities..."
     $preflight = & $AnalyzeScript -ReportPath $tmpReport
     $preflightAnalysis = $preflight | ConvertFrom-Json
     Remove-Item $tmpReport -ErrorAction SilentlyContinue
