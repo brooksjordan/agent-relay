@@ -27,6 +27,7 @@ Each night, the system:
 3. Breaks it into tasks
 4. Implements each task
 5. Creates a PR for your review
+6. Runs a structured post-mortem (what worked, what didn't, what to try next)
 
 ---
 
@@ -35,9 +36,9 @@ Each night, the system:
 | Time | Job | What Happens |
 |------|-----|--------------|
 | 10:30 PM | **Compound Review** | Reviews your Claude Code sessions from the day, extracts learnings, updates CLAUDE.md |
-| 11:00 PM | **Auto-Compound** | Picks #1 priority, builds it, opens PR |
+| 11:00 PM | **Auto-Compound** | Picks #1 priority, builds it, opens PR, runs post-mortem |
 
-The order matters — learnings from Job 1 inform Job 2.
+The order matters — learnings from Job 1 inform Job 2. The post-mortem at the end of Job 2 feeds forward into the next night's build.
 
 ---
 
@@ -128,10 +129,13 @@ EVENING
   └─► Breaks into 5-10 small tasks
   └─► Implements each task, commits along the way
   └─► Opens draft PR
+  └─► Runs five-point post-mortem (Analyst pattern)
+  └─► Persists learnings to logs/post-mortem-YYYY-MM-DD.md
 
 NEXT MORNING
   └─► PR waiting for review
-  └─► Repeat
+  └─► Post-mortem waiting alongside it
+  └─► Repeat (next night's build reads prior post-mortems)
 ```
 
 ---
@@ -156,13 +160,21 @@ The scope depends on how you write the priority. Be specific:
 
 ## The Compound Effect
 
-Each night makes future nights smarter:
+Each night makes future nights smarter through two feedback loops:
 
+**Loop 1: Compound Review (patterns, gotchas, context)**
 1. **Day 1:** You hit a bug with Next.js Image component
 2. **Night 1:** Compound Review extracts this as a "gotcha" → updates CLAUDE.md
 3. **Night 2+:** Agent reads CLAUDE.md before building, avoids the same bug
 
-Your CLAUDE.md becomes institutional memory that accumulates over time.
+**Loop 2: Post-Mortem (structured reflection)**
+1. **Night 1:** Auto-Compound builds feature, then runs five-point post-mortem
+2. **Post-mortem captures:** What matched the PRD vs. didn't, which tasks caused issues, what the agent learned
+3. **Night 2+:** Builder reads prior post-mortems during PRD creation, avoids repeating mistakes
+
+The difference: Compound Review captures *what happened today*. Post-mortems capture *why it happened and what to do differently*. Research shows top-performing systems drew 44.8% of ideas from structured reflection vs. 37.7% for average. Reflection is the wedge between good and great.
+
+Your CLAUDE.md + post-mortems become institutional memory that accumulates over time.
 
 ---
 
@@ -178,7 +190,8 @@ your-project/
 ├── .claude-sessions/         # Session logs (auto-generated)
 ├── logs/
 │   ├── compound-review.log
-│   └── auto-compound.log
+│   ├── auto-compound.log
+│   └── post-mortem-YYYY-MM-DD.md  # Structured five-point analysis (auto-generated)
 └── CLAUDE.md                 # Living knowledge base (auto-updated)
 ```
 

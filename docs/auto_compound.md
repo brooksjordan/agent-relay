@@ -35,6 +35,14 @@ The nightly implementation engine. Runs at 11:00 PM, after Compound Review.
 │     └─► git push -u origin <branch>                             │
 │     └─► gh pr create --draft                                    │
 │                                                                 │
+│  STAGE 8: Mark Priority Complete                                │
+│     └─► Strikethrough completed item in report                  │
+│                                                                 │
+│  STAGE 9: Post-Mortem (Analyst)                                 │
+│     └─► Five-point structured reflection                        │
+│     └─► Saved to logs/post-mortem-YYYY-MM-DD.md                 │
+│     └─► Reads prior post-mortems for continuity                 │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -116,6 +124,7 @@ tasks/
 logs/
   auto-compound.log         # Run log
   loop.log                  # Execution loop log
+  post-mortem-2026-01-30.md # Five-point structured reflection (Analyst)
 ```
 
 ### Task JSON Format
