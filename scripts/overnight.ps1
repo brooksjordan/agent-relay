@@ -122,6 +122,11 @@ while ($attempt -lt $MaxRetries -and $exitCode -ne 0) {
 
     Write-Host "Starting build attempt $attempt..." -ForegroundColor Cyan
 
+    # On retry attempts, pass -Resume so the pipeline picks up where it left off
+    if ($attempt -gt 1) {
+        $autoCompoundArgs['Resume'] = $true
+    }
+
     try {
         & $autoCompoundScript @autoCompoundArgs
         $exitCode = $LASTEXITCODE

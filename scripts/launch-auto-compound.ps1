@@ -13,7 +13,9 @@ param(
 
     [string]$ProjectName = "",
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [switch]$Resume
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +30,7 @@ if ($VerbosePreference -eq "Continue" -or $PSBoundParameters.ContainsKey('Verbos
     $innerArgs += " -Verbose"
 }
 if ($DryRun)               { $innerArgs += " -DryRun" }
+if ($Resume)               { $innerArgs += " -Resume" }
 
 # Write a temp wrapper that sets the env var and launches auto-compound
 $wrapper = Join-Path $env:TEMP ("shipasleep-" + [guid]::NewGuid().ToString().Substring(0,8) + ".ps1")
