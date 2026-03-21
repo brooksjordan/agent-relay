@@ -1,0 +1,36 @@
+# Logs and Transcripts
+*.log
+logs/
+transcripts/
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.credential
+secrets.json
+auth.json
+
+# Node.js artifacts (if cloned into Node projects)
+node_modules/
+npm-debug.log
+package-lock.json
+
+# OS Generated
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# User specific configuration
+config.local.json
+*.local.ps1
+
+# Temporary files
+*.tmp
+*.temp
+temp_*.txt
+
+# VS Code
+.vscode/
+
+# PowerShell module cache
+PSModulePath/

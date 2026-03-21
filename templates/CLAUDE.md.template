@@ -1,0 +1,44 @@
+# CLAUDE.md
+
+Project instructions for Claude Code.
+
+## Project Overview
+
+<!-- Brief description of what this project does -->
+
+## Architecture
+
+<!-- Key directories, files, patterns -->
+
+## Development Commands
+
+```bash
+# Build
+# Test
+# Run
+```
+
+## Conventions
+
+<!-- Code style, naming, patterns to follow -->
+
+---
+
+## Learned Patterns
+
+<!-- Auto-populated by compound review -->
+<!-- Reusable approaches that work well in this codebase -->
+
+## Gotchas
+
+<!-- Auto-populated by compound review -->
+<!-- Edge cases, bugs, things that don't work as expected -->
+
+## Context
+
+<!-- Auto-populated by compound review -->
+<!-- Project-specific knowledge for future sessions -->
+
+---
+
+*Last compound review: never*

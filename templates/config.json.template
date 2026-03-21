@@ -1,0 +1,11 @@
+{
+  "qualityChecks": [
+    "npm run typecheck",
+    "npm run lint",
+    "npm test"
+  ],
+  "maxIterations": 25,
+  "branchPrefix": "feature/",
+  "reportsDir": "reports",
+  "tasksDir": "tasks"
+}

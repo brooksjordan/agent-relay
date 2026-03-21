@@ -1,0 +1,35 @@
+# Priority Report - YYYY-MM-DD
+
+## Priority 1: [Title]
+
+[Description of the highest priority item. Be specific about what needs to be built.]
+
+**Why:** [Business justification]
+
+**Scope:**
+- [Key requirement 1]
+- [Key requirement 2]
+- [Key requirement 3]
+
+**Not in scope:**
+- [Explicitly excluded item]
+
+---
+
+## Priority 2: [Title]
+
+[Description]
+
+---
+
+## Priority 3: [Title]
+
+[Description]
+
+---
+
+## Notes
+
+- [Any context the agent should know]
+- [Dependencies or blockers]
+- [Related previous work]

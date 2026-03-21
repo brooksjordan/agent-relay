@@ -1,0 +1,105 @@
+THIRD-PARTY NOTICES
+
+Agent Relay incorporates ideas, patterns, and code from the following
+open-source projects. Their copyright notices and license texts are
+reproduced below as required by the MIT License.
+
+================================================================================
+1. Ralph
+   Repository: https://github.com/snarktank/ralph
+   Author:     Ryan Carson / snarktank
+   Used for:   The "Ralph" pattern -- an autonomous agent that monitors a
+               project, identifies the highest-priority improvement, and
+               implements it as a pull request while the developer is away.
+               Agent Relay's core loop (analyze report, plan tasks, execute
+               iteratively, open PR) derives from this pattern.
+================================================================================
+
+MIT License
+
+Copyright (c) 2026 snarktank
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+2. compound-product
+   Repository: https://github.com/snarktank/compound-product
+   Author:     Ryan Carson / snarktank
+   License:    MIT (declared in README; no LICENSE file in repository)
+   Used for:   The compound automation pipeline -- report analysis, PRD
+               generation, task decomposition into machine-verifiable steps,
+               and the iterative execution loop with quality gates. Agent
+               Relay's auto-compound script structure and stage-based
+               pipeline design are adapted from this project.
+================================================================================
+
+MIT License
+
+Copyright (c) 2026 snarktank
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+3. compound-engineering-plugin
+   Repository: https://github.com/EveryInc/compound-engineering-plugin
+   Author:     Every Inc
+   Used for:   The "Compound Engineering" methodology originally described by
+               Kieran Klaassen at Every. Agent Relay uses the plugin's approach
+               to AGENTS.md-based project memory, skill-driven task execution,
+               and the philosophy that small autonomous improvements compound
+               over time.
+================================================================================
+
+MIT License
+
+Copyright (c) 2025 Every
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
