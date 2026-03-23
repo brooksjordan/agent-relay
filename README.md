@@ -22,21 +22,43 @@ Agent Relay works overnight or during the day.
 
 ## Quick Start
 
+### macOS / Linux (Bash)
+
+```bash
+# Clone
+git clone https://github.com/brooksjordan/agent-relay.git
+
+# Create a priority report in your project
+mkdir -p ./your-project/reports
+echo -e "1. Build the user dashboard\n2. Add authentication\n3. Fix cart bug" > ./your-project/reports/PRIORITIES.md
+
+# Dry run first (no changes)
+./scripts/launch-auto-compound.sh --project-path "./your-project" --dry-run --verbose
+
+# Run for real (opens Terminal window, builds #1 priority, opens PR)
+./scripts/launch-auto-compound.sh --project-path "./your-project" --verbose
+
+# For overnight automation (macOS launchd)
+./scripts/install-scheduler.sh --project-path "./your-project"
+```
+
+### Windows (PowerShell)
+
 ```powershell
 # Clone
 git clone https://github.com/brooksjordan/agent-relay.git
 
 # Create a priority report in your project
 mkdir ./your-project/reports
-"1. Build the user dashboard`n2. Add authentication`n3. Fix cart bug" | Out-File ./your-project/reports/priority.md
+"1. Build the user dashboard`n2. Add authentication`n3. Fix cart bug" | Out-File ./your-project/reports/PRIORITIES.md
 
 # Dry run first (no changes)
-.\scripts\auto-compound.ps1 -ProjectPath "./your-project" -DryRun
+.\scripts\launch-auto-compound.ps1 -ProjectPath "./your-project" -DryRun -Verbose
 
-# Run for real (creates branch, builds #1 priority, opens PR)
-.\scripts\auto-compound.ps1 -ProjectPath "./your-project"
+# Run for real (opens PowerShell window, builds #1 priority, opens PR)
+.\scripts\launch-auto-compound.ps1 -ProjectPath "./your-project" -Verbose
 
-# For overnight automation (Windows only)
+# For overnight automation (Windows Task Scheduler)
 .\scripts\install-scheduler.ps1 -ProjectPath "./your-project"
 ```
 
@@ -58,107 +80,130 @@ The pipeline runs through 9 stages:
 
 Each stage gates the next. If a stage fails, the pipeline retries or stops.
 
-**Why PowerShell?** Started on a Windows laptop and kept going. Once there, PowerShell was the right choice for Task Scheduler integration and for orchestrating interactive CLI processes like Claude Code — it handles them natively, without the subprocess and pseudo-terminal boilerplate Python requires. Cross-platform via PowerShell 7+ (`pwsh`).
+**Cross-platform:** Started on Windows with PowerShell, now has native Bash scripts for macOS/Linux. Both script sets are maintained side-by-side and are functionally identical. macOS uses `caffeinate` for sleep prevention and `launchd` for scheduling; Windows uses `SetThreadExecutionState` and Task Scheduler.
 
 ---
 
 ## Prerequisites
 
-- **PowerShell:**
-  - Windows: 5.1+ (built-in)
-  - Mac: `brew install powershell`
-  - Linux: `sudo apt install powershell` or [install guide](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-linux)
+**All platforms:**
 - **Claude Code CLI** installed and authenticated (`claude --version`)
 - **Git** configured with user.name and user.email
 - **ANTHROPIC_API_KEY** environment variable set
 - **GitHub CLI** (`gh`) for automatic PR creation (optional)
 
-> **Mac/Linux scheduling:** `install-scheduler.ps1` uses Windows Task Scheduler. Use cron instead:
-> ```bash
-> # Example: run at 11 PM every weekday
-> 0 23 * * 1-5 pwsh /path/to/agent-relay/scripts/overnight.ps1 -ProjectPath "/path/to/project"
-> ```
+**macOS / Linux (Bash scripts):**
+- **Bash 4+** (macOS ships with 3.2 but scripts are compatible; Homebrew `bash` recommended)
+- **jq** for JSON processing (`brew install jq` or `apt install jq`)
+- **perl** (built-in on macOS and most Linux)
+- macOS: `caffeinate` (built-in) for sleep prevention
+- macOS: `osascript` (built-in) for opening terminal windows
+
+**Windows (PowerShell scripts):**
+- **PowerShell 5.1+** (built-in on Windows)
 
 ---
 
 ## Scripts
 
-### auto-compound.ps1
+Every script has both a `.ps1` (Windows/PowerShell) and `.sh` (macOS/Linux/Bash) version. They are functionally identical.
+
+### auto-compound (.ps1 / .sh)
 
 The full pipeline: analyze report, generate PRD, create tasks, execute.
 
-```powershell
+```bash
+# macOS/Linux
+./scripts/auto-compound.sh --project-path "./your-project"
+
+# Windows
 .\scripts\auto-compound.ps1 -ProjectPath "./your-project"
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| ProjectPath | required | Path to your project |
-| MaxIterations | 25 | Max task iterations |
-| QualityChecks | @() | Commands to run after each task |
-| DryRun | false | Preview without changes |
-| Resume | false | Resume from last checkpoint |
-| ProjectName | auto | Override project name |
-| ReportFile | auto | Path to priority report |
+| Bash Flag | PS Flag | Default | Description |
+|-----------|---------|---------|-------------|
+| --project-path | -ProjectPath | required | Path to your project |
+| --max-iterations | -MaxIterations | 25 | Max task iterations |
+| --quality-checks | -QualityChecks | none | Comma-separated commands to run after each task |
+| --dry-run | -DryRun | false | Preview without changes |
+| --resume | -Resume | false | Resume from last checkpoint |
+| --project-name | -ProjectName | auto | Override project name |
+| --verbose | -Verbose | false | Show all log output |
 
-### loop.ps1
+### loop (.ps1 / .sh)
 
 The core execution engine. Processes tasks one at a time from a JSON file.
 
-```powershell
+```bash
+# macOS/Linux
+./scripts/loop.sh --tasks-file "./your-project/tasks/tasks.json"
+
+# Windows
 .\scripts\loop.ps1 -TasksFile "./your-project/tasks/tasks.json"
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| TasksFile | required | Path to tasks JSON file |
-| MaxIterations | 25 | Stop after N iterations |
-| TaskTimeoutSeconds | 900 | Hard timeout per task |
-| TranscriptDir | auto | Directory for session transcripts |
-| QualityChecks | @() | Commands to run after each task |
-| ArchiveDir | "" | Archive previous runs |
+| Bash Flag | PS Flag | Default | Description |
+|-----------|---------|---------|-------------|
+| --tasks-file | -TasksFile | required | Path to tasks JSON file |
+| --max-iterations | -MaxIterations | 25 | Stop after N iterations |
+| --task-timeout | -TaskTimeoutSeconds | 900 | Hard timeout per task |
+| --transcript-dir | -TranscriptDir | auto | Directory for session transcripts |
+| --quality-checks | -QualityChecks | none | Comma-separated check commands |
 
 **Task JSON format:**
 ```json
 {
-  "metadata": {
-    "project": "project-name",
-    "branch": "feature/xyz",
-    "created": "2026-01-30T12:00:00Z"
-  },
   "tasks": [
     {
       "id": 1,
       "title": "Create component",
-      "status": "pending",
-      "acceptance_criteria": "File exists at src/Component.tsx"
+      "description": "What to implement",
+      "file": "src/Component.tsx",
+      "acceptanceCriteria": ["File exists at src/Component.tsx", "Exports default component"],
+      "status": "pending"
     }
   ]
 }
 ```
 
-### overnight.ps1
+### overnight (.ps1 / .sh)
 
-Wrapper that adds retry logic, exponential backoff, and keep-awake.
+Wrapper that adds retry logic, exponential backoff, and keep-awake (caffeinate on macOS, F15 key on Windows).
 
-```powershell
+```bash
+# macOS/Linux
+./scripts/overnight.sh --project-path "./your-project"
+
+# Windows
 .\scripts\overnight.ps1 -ProjectPath "./your-project"
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| ProjectPath | required | Path to project |
-| MaxIterations | 25 | Max iterations per attempt |
-| MaxRetries | 3 | Retry attempts on failure |
-| RetryDelaySeconds | 30 | Initial retry delay (backs off to 5 min) |
-| QualityChecks | @() | Commands to run after each task |
-
-### compound-review.ps1
+### compound-review (.ps1 / .sh)
 
 Extracts learnings from Claude Code sessions into your project's CLAUDE.md.
 
-```powershell
+```bash
+# macOS/Linux
+./scripts/compound-review.sh --project-path "./your-project"
+
+# Windows
 .\scripts\compound-review.ps1 -ProjectPath "./your-project"
+```
+
+### Scheduling
+
+```bash
+# macOS — install launchd agents (runs nightly)
+./scripts/install-scheduler.sh --project-path "./your-project"
+./scripts/status-scheduler.sh
+./scripts/uninstall-scheduler.sh
+```
+
+```powershell
+# Windows — install Task Scheduler jobs
+.\scripts\install-scheduler.ps1 -ProjectPath "./your-project"
+.\scripts\status-scheduler.ps1
+.\scripts\uninstall-scheduler.ps1
 ```
 
 ---
@@ -212,7 +257,7 @@ Hard-won lessons about Claude Code CLI invocation, working directory, task verif
 
 **Task keeps failing** — Make acceptance criteria specific and verifiable. Scope tasks smaller. Check `progress.txt` for patterns.
 
-**Scheduler not running** — Check Task Scheduler is enabled. Verify machine doesn't sleep during automation. Check `logs/` for errors.
+**Scheduler not running** — Windows: check Task Scheduler is enabled. macOS: run `./scripts/status-scheduler.sh` or `launchctl list | grep agentrelay`. Verify machine doesn't sleep during automation. Check `logs/` for errors.
 
 ---
 
@@ -232,4 +277,4 @@ MIT — See [LICENSE](LICENSE) and [NOTICES](NOTICES) for upstream attributions.
 
 ## Contributing
 
-Contributions welcome. Bash ports of the PowerShell scripts would be especially valuable for Mac/Linux users. When something breaks: fix it, document why in `docs/lessons-learned.md`, and update this README.
+Contributions welcome. Both PowerShell (`.ps1`) and Bash (`.sh`) scripts are maintained side-by-side. When something breaks: fix it, document why in `docs/lessons-learned.md`, and update this README.
