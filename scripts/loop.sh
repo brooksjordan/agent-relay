@@ -659,11 +659,10 @@ When done, output one of:
         consecutive_failures=0
 
         # Check if ALL tasks are now complete
-        local all_pending
         all_pending=$(jq '[.tasks[] | select(.status != "completed")] | length' "$tasks_file")
         if [[ "$all_pending" -eq 0 ]]; then
             write_log "ALL TASKS COMPLETE!" "SUCCESS"
-            echo "<promise>COMPLETE</promise>"
+            echo "<promise>COMPLETE</promise>" >&2
             write_log "<promise>COMPLETE</promise>" "SUCCESS"
             break
         fi

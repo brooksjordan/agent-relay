@@ -80,7 +80,9 @@ stage_order=("0" "1" "2" "3" "4" "4v" "5" "6" "7" "8" "9")
 run_id=$(uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-8)
 started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 pipeline_start_epoch=$(date +%s)
-declare -A stage_timings
+# Stage timings stored as a flat string "stage=seconds;stage=seconds;..."
+# (bash 3.2 on macOS doesn't support associative arrays)
+_stage_timings=""
 resume_state=""
 
 # State variables populated during pipeline
@@ -98,7 +100,13 @@ start_stage_timer() { stage_start_epoch=$(date +%s); }
 stop_stage_timer() {
     local stage="$1"
     local elapsed=$(( $(date +%s) - stage_start_epoch ))
-    stage_timings[$stage]=$elapsed
+    _stage_timings="${_stage_timings}${stage}=${elapsed};"
+}
+
+# Get timing for a stage from _stage_timings string
+get_stage_timing() {
+    local stage="$1"
+    echo "$_stage_timings" | tr ';' '\n' | grep "^${stage}=" | cut -d= -f2
 }
 
 # Get index of a stage in stage_order
@@ -131,13 +139,19 @@ save_pipeline_state() {
     local completed_stage="$1"
     local elapsed=$(( $(date +%s) - pipeline_start_epoch ))
 
-    # Build stage_timings JSON
+    # Build stage_timings JSON from flat string
     local timings_json="{"
     local first=true
-    for key in "${!stage_timings[@]}"; do
+    local IFS_OLD="$IFS"
+    IFS=";"
+    for entry in $_stage_timings; do
+        if [[ -z "$entry" ]]; then continue; fi
+        local key="${entry%%=*}"
+        local val="${entry#*=}"
         if [[ "$first" == "true" ]]; then first=false; else timings_json+=","; fi
-        timings_json+="\"$key\":${stage_timings[$key]}"
+        timings_json+="\"$key\":$val"
     done
+    IFS="$IFS_OLD"
     timings_json+="}"
 
     jq -n \
@@ -846,14 +860,26 @@ Write the JSON file now."
         loop_exit=$?
         set -e
 
-        # Check for completion signal
-        if echo "$loop_output" | grep -q "<promise>COMPLETE</promise>"; then
-            write_log "Received completion signal - all tasks done!" "SUCCESS"
+        # Parse the JSON summary — find the last valid JSON object in stdout
+        # loop.sh sends logs to stderr (via color_echo) and JSON to stdout
+        loop_json=""
+        while IFS= read -r line; do
+            if echo "$line" | jq -e '.' > /dev/null 2>&1; then
+                loop_json="$line"
+            fi
+        done <<< "$loop_output"
+
+        # Fallback: if we couldn't find JSON in stdout, derive from tasks file
+        if [[ -z "$loop_json" ]] && [[ -f "$tasks_path" ]]; then
+            write_log "Could not parse loop JSON output, deriving results from tasks file" "WARN"
+            loop_result_completed=$(jq '[.tasks[] | select(.status == "completed")] | length' "$tasks_path")
+            loop_result_failed=$(jq '[.tasks[] | select(.status == "failed")] | length' "$tasks_path")
+            loop_result_pending=$(jq '[.tasks[] | select(.status == "pending")] | length' "$tasks_path")
+            loop_result_iterations="unknown"
+            write_log "Derived: $loop_result_completed completed, $loop_result_failed failed, $loop_result_pending pending"
         fi
 
-        # Parse the JSON summary (last line of output)
-        loop_json=$(echo "$loop_output" | tail -1)
-        if echo "$loop_json" | jq -e '.' > /dev/null 2>&1; then
+        if [[ -n "$loop_json" ]] && echo "$loop_json" | jq -e '.' > /dev/null 2>&1; then
             loop_result_completed=$(echo "$loop_json" | jq -r '.completed // 0')
             loop_result_failed=$(echo "$loop_json" | jq -r '.failed // 0')
             loop_result_pending=$(echo "$loop_json" | jq -r '.pending // 0')
@@ -1150,8 +1176,10 @@ duration_str=$(printf '%02d:%02d:%02d' $((elapsed_total/3600)) $(((elapsed_total
 write_log "Total duration: $duration_str" "SUCCESS"
 
 for stage in "${stage_order[@]}"; do
-    if [[ -n "${stage_timings[$stage]:-}" ]]; then
-        mins=$(awk "BEGIN {printf \"%.1f\", ${stage_timings[$stage]} / 60}")
+    local timing
+    timing=$(get_stage_timing "$stage")
+    if [[ -n "$timing" ]]; then
+        mins=$(awk "BEGIN {printf \"%.1f\", $timing / 60}")
         write_log "  Stage $stage: ${mins}m"
     fi
 done
