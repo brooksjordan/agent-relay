@@ -933,72 +933,68 @@ $($analysis.description)
     # Ensure $hasRemote is set (may not be if Stage 7 was skipped via resume)
     if (-not $hasRemote) { $hasRemote = git remote 2>$null }
 
-    # Switch to main/master to update the priority report
-    $checkoutResult = Invoke-Native git checkout $defaultBranch
-    if ($hasRemote) {
-        Invoke-Native git pull origin $defaultBranch | Out-Null
-    }
+    # Mark priority complete ON THE FEATURE BRANCH (not main).
+    # The PR created in Stage 7 will carry this commit. Human merges the PR,
+    # which lands both the code AND the "marked complete" update on main.
+    # This ensures nothing reaches main without PR review.
+    $reportPath = Join-Path $reportsFullDir $ReportFile
+    if (Test-Path $reportPath) {
+        $reportContent = Get-Content $reportPath -Raw
+        $prNumber = ""
 
-    if ($checkoutResult.ExitCode -ne 0) {
-        Write-Log "Could not switch to $defaultBranch to mark priority complete" "WARN"
-    } else {
-        $reportPath = Join-Path $reportsFullDir $ReportFile
-        if (Test-Path $reportPath) {
-            $reportContent = Get-Content $reportPath -Raw
-            $prNumber = ""
+        # Extract PR number from gh output if available
+        if ($ghOutput -match '#(\d+)') {
+            $prNumber = $Matches[1]
+        } elseif ($ghOutput -match '/pull/(\d+)') {
+            $prNumber = $Matches[1]
+        }
 
-            # Extract PR number from gh output if available
-            if ($ghOutput -match '#(\d+)') {
-                $prNumber = $Matches[1]
-            } elseif ($ghOutput -match '/pull/(\d+)') {
-                $prNumber = $Matches[1]
+        # Build completion line
+        $completionNote = "PR #$prNumber. Branch: ``$branchName``. Awaiting human review."
+        if (-not $prNumber) {
+            $completionNote = "Branch: ``$branchName``. Awaiting human review."
+        }
+
+        # Extract priority ID from priority_item (e.g., "P08" from "P08 - Wider Monte Carlo")
+        $priorityId = ""
+        if ($analysis.priority_item -match '(P\d+)') {
+            $priorityId = $Matches[1]
+        }
+
+        if (-not $priorityId) {
+            Write-Log "Could not extract priority ID (e.g. P08) from: $($analysis.priority_item)" "WARN"
+        }
+
+        # Match heading by priority ID in brackets (e.g., ## Priority 8 [P08-WIDER-MC]: ...)
+        $pattern = "(?ms)(## )(Priority \d+ \[$priorityId[^\]]*\]: [^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
+        if ($priorityId -and $reportContent -match $pattern) {
+            $fullMatch = $Matches[0]
+            $headingPrefix = $Matches[1]
+            $headingText = $Matches[2]
+            $replacement = "${headingPrefix}~~${headingText}~~ COMPLETE`n`n${completionNote}"
+            $newContent = $reportContent.Replace($fullMatch, $replacement)
+            $newContent | Set-Content $reportPath -NoNewline
+
+            # Commit on feature branch and push feature branch (NOT main)
+            $addResult = Invoke-Native git add $reportPath
+            $commitResult = Invoke-Native git commit -m "Mark $($analysis.priority_item) complete"
+            if ($hasRemote) {
+                $pushBranch = Invoke-Native git push origin $branchName
             }
 
-            # Build completion line
-            $completionNote = "Merged via PR #$prNumber. Branch: ``$branchName``."
-            if (-not $prNumber) {
-                $completionNote = "Branch: ``$branchName``."
-            }
-
-            # Extract priority ID from priority_item (e.g., "P08" from "P08 - Wider Monte Carlo")
-            $priorityId = ""
-            if ($analysis.priority_item -match '(P\d+)') {
-                $priorityId = $Matches[1]
-            }
-
-            if (-not $priorityId) {
-                Write-Log "Could not extract priority ID (e.g. P08) from: $($analysis.priority_item)" "WARN"
-            }
-
-            # Match heading by priority ID in brackets (e.g., ## Priority 8 [P08-WIDER-MC]: ...)
-            $pattern = "(?ms)(## )(Priority \d+ \[$priorityId[^\]]*\]: [^\r\n]*)\r?\n\r?\n(.*?)(?=\r?\n---|\r?\n## |$)"
-            if ($priorityId -and $reportContent -match $pattern) {
-                $fullMatch = $Matches[0]
-                $headingPrefix = $Matches[1]
-                $headingText = $Matches[2]
-                $replacement = "${headingPrefix}~~${headingText}~~ COMPLETE`n`n${completionNote}"
-                $newContent = $reportContent.Replace($fullMatch, $replacement)
-                $newContent | Set-Content $reportPath -NoNewline
-
-                # Commit and push
-                $addResult = Invoke-Native git add $reportPath
-                $commitResult = Invoke-Native git commit -m "Mark $($analysis.priority_item) complete"
-                if ($hasRemote) {
-                    $pushMain = Invoke-Native git push origin $defaultBranch
-                }
-
-                if ($hasRemote -and $pushMain.ExitCode -eq 0) {
-                    Write-Log "Priority marked complete in report and pushed to $defaultBranch" "SUCCESS"
-                } elseif ($hasRemote) {
-                    Write-Log "Priority marked complete locally but push failed" "WARN"
-                } else {
-                    Write-Log "Priority marked complete in report" "SUCCESS"
-                }
+            if ($hasRemote -and $pushBranch.ExitCode -eq 0) {
+                Write-Log "Priority marked complete on branch $branchName and pushed" "SUCCESS"
+                Write-Log "PR is ready for human review. Merge the PR to land changes on $defaultBranch." "SUCCESS"
+            } elseif ($hasRemote) {
+                Write-Log "Priority marked complete locally but push failed" "WARN"
             } else {
-                Write-Log "Could not find priority heading to mark complete (may already be marked)" "WARN"
+                Write-Log "Priority marked complete on branch $branchName" "SUCCESS"
             }
         } else {
-            Write-Log "Report file not found at $reportPath" "WARN"
+            Write-Log "Could not find priority heading to mark complete (may already be marked)" "WARN"
+        }
+    } else {
+        Write-Log "Report file not found at $reportPath" "WARN"
         }
     }
     Stop-StageTimer "8"
