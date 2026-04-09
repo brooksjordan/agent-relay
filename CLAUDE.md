@@ -112,7 +112,7 @@ The pipeline automatically cleans up after itself between builds. `.gitignore` i
 | 5 | Convert PRD to task JSON | No |
 | 6 | Execute tasks via loop.ps1 (with replan support) | Writes code |
 | 7 | Push branch, create PR (skipped if 0 tasks completed) | No |
-| 8 | Mark priority complete on feature branch, push branch (human merges PR to land on main) | Modifies report |
+| 8 | Mark priority complete in report, push to main (exits if incomplete) | Modifies report |
 | 9 | Post-mortem (Analyst pattern) | No |
 
 ### Recent Fixes
